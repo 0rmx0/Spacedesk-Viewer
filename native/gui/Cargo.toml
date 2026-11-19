@@ -1,0 +1,23 @@
+[package]
+name = "spacedesk-gui"
+version = "0.1.0"
+edition = "2021"
+description = "Native high-performance spacedesk viewer for Linux (Ubuntu 24.04): WebSocket + FFmpeg/VA-API decode + OpenGL rendering"
+license = "MIT"
+
+[[bin]]
+name = "spacedesk-viewer"
+path = "src/main.rs"
+
+[dependencies]
+spacedesk-core = { path = "../core" }
+winit = "0.29"
+glutin = "0.31"
+glutin-winit = "0.4"
+glow = "0.14"
+raw-window-handle = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

@@ -1,0 +1,18 @@
+[package]
+name = "spacedesk-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Headless spacedesk viewer client (stats / frame dump) for Linux"
+license = "MIT"
+
+[[bin]]
+name = "spacedesk-cli"
+path = "src/main.rs"
+
+[dependencies]
+spacedesk-core = { path = "../core" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

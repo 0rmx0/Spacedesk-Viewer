@@ -1,0 +1,90 @@
+//! Mapping from winit `KeyCode` to Windows virtual-key codes (what the spacedesk
+//! server expects in keyboard packets). Extended keys set the EXTEND_KEY flag.
+
+use winit::keyboard::KeyCode;
+
+/// Returns (virtual_key_code, extended).
+pub fn to_vk(code: KeyCode) -> Option<(u32, bool)> {
+    use KeyCode::*;
+    let (vk, ext) = match code {
+        // digits
+        Digit1 => (0x31, false), Digit2 => (0x32, false), Digit3 => (0x33, false),
+        Digit4 => (0x34, false), Digit5 => (0x35, false), Digit6 => (0x36, false),
+        Digit7 => (0x37, false), Digit8 => (0x38, false), Digit9 => (0x39, false),
+        Digit0 => (0x30, false),
+        // letters
+        KeyA => (0x41, false), KeyB => (0x42, false), KeyC => (0x43, false),
+        KeyD => (0x44, false), KeyE => (0x45, false), KeyF => (0x46, false),
+        KeyG => (0x47, false), KeyH => (0x48, false), KeyI => (0x49, false),
+        KeyJ => (0x4A, false), KeyK => (0x4B, false), KeyL => (0x4C, false),
+        KeyM => (0x4D, false), KeyN => (0x4E, false), KeyO => (0x4F, false),
+        KeyP => (0x50, false), KeyQ => (0x51, false), KeyR => (0x52, false),
+        KeyS => (0x53, false), KeyT => (0x54, false), KeyU => (0x55, false),
+        KeyV => (0x56, false), KeyW => (0x57, false), KeyX => (0x58, false),
+        KeyY => (0x59, false), KeyZ => (0x5A, false),
+        // function keys
+        F1 => (0x70, false), F2 => (0x71, false), F3 => (0x72, false),
+        F4 => (0x73, false), F5 => (0x74, false), F6 => (0x75, false),
+        F7 => (0x76, false), F8 => (0x77, false), F9 => (0x78, false),
+        F10 => (0x79, false), F11 => (0x7A, false), F12 => (0x7B, false),
+        F13 => (0x7C, false), F14 => (0x7D, false), F15 => (0x7E, false),
+        F16 => (0x7F, false), F17 => (0x80, false), F18 => (0x81, false),
+        F19 => (0x82, false), F20 => (0x83, false), F21 => (0x84, false),
+        F22 => (0x85, false), F23 => (0x86, false), F24 => (0x87, false),
+        // modifiers
+        ShiftLeft | ShiftRight => (0x10, false),
+        ControlLeft => (0x11, false),
+        ControlRight => (0x11, true),
+        AltLeft => (0x12, false),
+        AltRight => (0x12, true),
+        SuperLeft => (0x5B, true),
+        SuperRight => (0x5C, true),
+        CapsLock => (0x14, false),
+        NumLock => (0x90, true),
+        ScrollLock => (0x91, false),
+        // navigation
+        Escape => (0x1B, false),
+        Space => (0x20, false),
+        Enter => (0x0D, false),
+        NumpadEnter => (0x0D, true),
+        Backspace => (0x08, false),
+        Tab => (0x09, false),
+        ArrowLeft => (0x25, true),
+        ArrowUp => (0x26, true),
+        ArrowRight => (0x27, true),
+        ArrowDown => (0x28, true),
+        Insert => (0x2D, true),
+        Delete => (0x2E, true),
+        Home => (0x24, true),
+        End => (0x23, true),
+        PageUp => (0x21, true),
+        PageDown => (0x22, true),
+        PrintScreen => (0x2C, true),
+        Pause => (0x13, true),
+        // numpad
+        Numpad0 => (0x60, false), Numpad1 => (0x61, false), Numpad2 => (0x62, false),
+        Numpad3 => (0x63, false), Numpad4 => (0x64, false), Numpad5 => (0x65, false),
+        Numpad6 => (0x66, false), Numpad7 => (0x67, false), Numpad8 => (0x68, false),
+        Numpad9 => (0x69, false),
+        NumpadAdd => (0x6B, true),
+        NumpadSubtract => (0x6D, true),
+        NumpadMultiply => (0x6A, false),
+        NumpadDivide => (0x6F, true),
+        NumpadDecimal => (0x6E, false),
+        NumpadComma => (0x6C, false),
+        // OEM punctuation (US layout)
+        Minus => (0xBD, false),
+        Equal => (0xBB, false),
+        BracketLeft => (0xDB, false),
+        BracketRight => (0xDD, false),
+        Backslash => (0xDC, false),
+        Semicolon => (0xBA, false),
+        Quote => (0xDE, false),
+        Comma => (0xBC, false),
+        Period => (0xBE, false),
+        Slash => (0xBF, false),
+        Backquote => (0xC0, false),
+        _ => return None,
+    };
+    Some((vk, ext))
+}

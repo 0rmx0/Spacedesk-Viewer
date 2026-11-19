@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=spacedesk viewer
+Comment=Client natif haute performance pour serveur spacedesk (Windows)
+Exec=spacedesk-viewer
+TryExec=spacedesk-viewer
+Icon=spacedesk
+Terminal=false
+Type=Application
+Categories=Network;RemoteAccess;
+Keywords=spacedesk;remote;desktop;viewer;
