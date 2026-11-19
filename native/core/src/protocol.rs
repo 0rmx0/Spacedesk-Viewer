@@ -15,6 +15,16 @@ pub const KVM_HEADER_LEN: usize = 28;
 pub const VERSION_MAJOR: u32 = 4;
 pub const VERSION_MINOR: u32 = 8;
 
+/// Wire transport to the spacedesk driver on port 28252.
+/// The driver sniffs the first bytes: "GET ..." -> WebSocket mode,
+/// anything else -> raw binary packets (native mode, used by the official
+/// Windows/Android viewers).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Transport {
+    Tcp,
+    Ws,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum HeaderType {
@@ -199,6 +209,19 @@ pub struct CursorBitmapPacket {
     pub payload: Vec<u8>,
 }
 
+impl FrameBufferPacket {
+    /// Tile dimensions: the rect when it is non-empty (native TCP mode sends the
+    /// full screen size in width/height and the tile bounds in the rect), else
+    /// the header resolution (WS viewer mode sends the tile size there).
+    pub fn tile_dims(&self) -> (u32, u32) {
+        if self.rect.x2 > self.rect.x && self.rect.y2 > self.rect.y {
+            (self.rect.width(), self.rect.height())
+        } else {
+            (self.width.max(1), self.height.max(1))
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
     FrameBuffer(FrameBufferPacket),
@@ -207,7 +230,7 @@ pub enum Packet {
     CursorBitmap(CursorBitmapPacket),
     PowerSuspendHibernate(u32),
     Rotation(u32),
-    Ping,
+    Ping(Vec<u8>),
     Disconnect,
     Unknown { ty: u32, payload: Vec<u8> },
 }
@@ -265,7 +288,7 @@ pub fn parse_packets(buf: &[u8]) -> (Vec<Packet>, &[u8]) {
                 Packet::PowerSuspendHibernate(get_u32(header, 8))
             }
             Some(HeaderType::Rotation) => Packet::Rotation(get_u32(header, 8)),
-            Some(HeaderType::Ping) => Packet::Ping,
+            Some(HeaderType::Ping) => Packet::Ping(payload.to_vec()),
             Some(HeaderType::Disconnect) => Packet::Disconnect,
             _ => Packet::Unknown {
                 ty,
@@ -284,11 +307,15 @@ pub fn parse_packets(buf: &[u8]) -> (Vec<Packet>, &[u8]) {
 
 #[derive(Debug, Clone)]
 pub struct Identification {
+    pub transport: Transport,
     pub client_type: u32,
     pub compression: u32,
     pub quality: u32,
     pub subsampling: u32,
+    /// frame rate mode for the WS viewer layout (0=30, 1=60); in TCP native
+    /// mode the real fps value is sent instead.
     pub frame_rate: u16,
+    pub fps: u16,
     pub version_major: u32,
     pub version_minor: u32,
     /// Resolution advertised at header offsets 52/88 (usually the local screen).
@@ -301,11 +328,13 @@ pub struct Identification {
 impl Default for Identification {
     fn default() -> Self {
         Self {
+            transport: Transport::Tcp,
             client_type: ClientType::WindowsRemoteMonitor as u32,
             compression: Compression::H264 as u32,
             quality: 70,
             subsampling: 0, // the HTML5 viewer leaves header offset 20 at 0
             frame_rate: 0,  // 0 = 30 fps, 1 = 60 fps (as in the HTML5 viewer)
+            fps: 30,
             version_major: VERSION_MAJOR,
             version_minor: VERSION_MINOR,
             resolution: (1920, 1080),
@@ -316,6 +345,15 @@ impl Default for Identification {
 }
 
 /// Build the identification packet: 128-byte header + 334-byte payload.
+///
+/// Two layouts exist on the wire:
+/// - `Transport::Ws`: exactly what the official HTML5 viewer sends (payload
+///   magic UTF-16LE "1111122222", name at offset 78, fps mode at offset 44).
+/// - `Transport::Tcp`: the "native" layout used by the official Windows/Android
+///   viewers (payload starts with u32 1 + a UTF-16LE GUID, name at offset 78,
+///   real fps at offset 44, flags 0x10003 at offset 36, 3 at offset 20, 2 at 28,
+///   4 at offset 46) — confirmed working against current drivers by
+///   third-party reverse-engineered clients.
 pub fn identification_packet(ident: &Identification) -> Vec<u8> {
     let mut header = vec![0u8; HEADER_LEN];
     put_u32(&mut header, 0, HeaderType::Identification as u32);
@@ -323,11 +361,8 @@ pub fn identification_packet(ident: &Identification) -> Vec<u8> {
     put_u32(&mut header, 8, ident.version_major);
     put_u32(&mut header, 12, ident.version_minor);
     put_u32(&mut header, 16, ident.client_type);
-    put_u32(&mut header, 20, ident.subsampling);
     put_u32(&mut header, 24, ident.compression);
     put_u32(&mut header, 32, ident.quality.clamp(1, 100));
-    put_u16(&mut header, 44, ident.frame_rate);
-    put_u16(&mut header, 46, 0);
     put_u32(&mut header, 52, ident.resolution.0);
     put_u32(&mut header, 88, ident.resolution.1);
     match ident.resolution_custom {
@@ -344,10 +379,38 @@ pub fn identification_packet(ident: &Identification) -> Vec<u8> {
     }
 
     let mut payload = vec![0u8; PAYLOAD_LEN];
-    // magic pattern of the reference viewer: UTF-16LE "11111" then "22222"
-    for i in 0..5 {
-        payload[i * 2] = 0x31;
-        payload[10 + i * 2] = 0x32;
+    match ident.transport {
+        Transport::Ws => {
+            put_u32(&mut header, 20, ident.subsampling);
+            put_u16(&mut header, 44, ident.frame_rate);
+            put_u16(&mut header, 46, 0);
+            // magic pattern of the reference viewer: UTF-16LE "11111" then "22222"
+            for i in 0..5 {
+                payload[i * 2] = 0x31;
+                payload[10 + i * 2] = 0x32;
+            }
+        }
+        Transport::Tcp => {
+            put_u32(&mut header, 20, 3);
+            put_u32(&mut header, 28, 2);
+            put_u32(&mut header, 36, 0x0001_0003);
+            put_u16(&mut header, 44, if ident.fps == 0 { 30 } else { ident.fps });
+            put_u16(&mut header, 46, 4);
+            // payload: u32 1, then a UTF-16LE GUID, then the client name at 78
+            put_u32(&mut payload, 0, 1);
+            let guid = format!(
+                "{{{:08x}-{:04x}-{:04x}-{:04x}-{:012x}}}",
+                pseudo_rand_u32(),
+                pseudo_rand_u32() & 0xFFFF,
+                (pseudo_rand_u32() & 0x0FFF) | 0x4000,
+                (pseudo_rand_u32() & 0x3FFF) | 0x8000,
+                pseudo_rand_u32() & 0xFFFF_FFFF
+            );
+            let guid16: Vec<u16> = guid.encode_utf16().collect();
+            for (i, ch) in guid16.iter().take(36).enumerate() {
+                put_u16(&mut payload, 4 + i * 2, *ch);
+            }
+        }
     }
     // client name as UTF-16LE starting at offset 78
     let name: Vec<u16> = ident.client_name.encode_utf16().collect();
@@ -358,6 +421,18 @@ pub fn identification_packet(ident: &Identification) -> Vec<u8> {
     let mut packet = header;
     packet.extend_from_slice(&payload);
     packet
+}
+
+fn pseudo_rand_u32() -> u32 {
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9E3779B9)
+        ^ (std::process::id() as u64) << 32;
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    (seed >> 16) as u32
 }
 
 /// Flow-control ACK sent by the client after a complete frame (128-byte header only).

@@ -13,4 +13,5 @@ pub mod ffmpeg;
 pub mod frame;
 pub mod protocol;
 pub mod session;
+pub mod transport;
 pub mod ws;

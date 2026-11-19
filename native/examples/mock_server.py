@@ -107,30 +107,61 @@ def build_packet(ty, fields=(), payload=b""):
     return bytes(header) + payload
 
 
-def handle(conn, args):
-    # --- websocket handshake ---
-    req = b""
-    while b"\r\n\r\n" not in req:
-        chunk = conn.recv(4096)
+def recv_exact_raw(conn, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = conn.recv(n - len(buf))
         if not chunk:
-            return
-        req += chunk
-    headers = req.decode(errors="replace")
-    key = next(
-        line.split(":", 1)[1].strip()
-        for line in headers.split("\r\n")
-        if line.lower().startswith("sec-websocket-key")
-    )
-    conn.sendall(
-        (
-            "HTTP/1.1 101 Switching Protocols\r\n"
-            "Upgrade: websocket\r\nConnection: Upgrade\r\n"
-            f"Sec-WebSocket-Accept: {ws_accept(key)}\r\n\r\n"
-        ).encode()
-    )
+            raise ConnectionError("eof")
+        buf += chunk
+    return buf
+
+
+def read_raw_packet(conn):
+    header = recv_exact_raw(conn, HEADER_LEN)
+    plen = struct.unpack_from("<I", header, 4)[0]
+    payload = recv_exact_raw(conn, plen) if plen else b""
+    return header + payload
+
+
+def handle(conn, args):
+    if args.tcp:
+        # native raw-TCP mode: no HTTP/WebSocket handshake at all
+        def read_msg(c):
+            return read_raw_packet(c)
+
+        def send_msg(c, data):
+            c.sendall(data)
+    else:
+        # --- websocket handshake ---
+        req = b""
+        while b"\r\n\r\n" not in req:
+            chunk = conn.recv(4096)
+            if not chunk:
+                return
+            req += chunk
+        headers = req.decode(errors="replace")
+        key = next(
+            line.split(":", 1)[1].strip()
+            for line in headers.split("\r\n")
+            if line.lower().startswith("sec-websocket-key")
+        )
+        conn.sendall(
+            (
+                "HTTP/1.1 101 Switching Protocols\r\n"
+                "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                f"Sec-WebSocket-Accept: {ws_accept(key)}\r\n\r\n"
+            ).encode()
+        )
+
+        def read_msg(c):
+            return read_ws_message(c)
+
+        def send_msg(c, data):
+            send_ws_frame(c, 0x2, data)
 
     # --- identification packet ---
-    ident = read_ws_message(conn)
+    ident = read_msg(conn)
     if ident is None or len(ident) < HEADER_LEN:
         print("client did not send identification")
         return
@@ -151,14 +182,14 @@ def handle(conn, args):
     assert ty == T_IDENTIFICATION, "expected identification packet"
 
     # --- visibility on ---
-    send_ws_frame(conn, 0x2, build_packet(T_VISIBILITY, [(8, 1)]))
+    send_msg(conn, build_packet(T_VISIBILITY, [(8, 1)]))
 
     stop = threading.Event()
 
     def reader():
         while not stop.is_set():
             try:
-                msg = read_ws_message(conn)
+                msg = read_msg(conn)
             except (ConnectionError, OSError):
                 stop.set()
                 return
@@ -207,7 +238,7 @@ def handle(conn, args):
                      (32, w), (36, h), (40, 0), (64, 1)],
                     part,
                 )
-                send_ws_frame(conn, 0x2, pkt)
+                send_msg(conn, pkt)
         else:
             pkt = build_packet(
                 T_FRAMEBUFFER,
@@ -215,12 +246,15 @@ def handle(conn, args):
                  (32, w), (36, h), (40, 0), (64, 0)],
                 bytes(frame),
             )
-            send_ws_frame(conn, 0x2, pkt)
+            send_msg(conn, pkt)
         threading.Event().wait(args.delay)
 
     print(f"sent {args.frames} frames, closing")
     try:
-        send_ws_frame(conn, 0x8, struct.pack(">H", 1000))
+        if args.tcp:
+            conn.sendall(build_packet(T_DISCONNECT))
+        else:
+            send_ws_frame(conn, 0x8, struct.pack(">H", 1000))
     except OSError:
         pass
     stop.set()
@@ -236,6 +270,7 @@ def main():
     p.add_argument("--frames", type=int, default=100)
     p.add_argument("--delay", type=float, default=1.0 / 30)
     p.add_argument("--fragment", action="store_true", help="split each frame into 4 fragments")
+    p.add_argument("--tcp", action="store_true", help="native raw-TCP mode (no WebSocket), like current drivers expect")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 

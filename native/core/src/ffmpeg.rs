@@ -8,6 +8,7 @@
 
 use crate::decoder::{DecodeError, Decoder};
 use crate::frame::{DecodedFrame, PixelFormat};
+use crate::protocol::Rect;
 use crate::protocol::{Compression, FrameBufferPacket};
 use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -72,7 +73,7 @@ impl FfmpegDecoder {
         height: u32,
         frame_rate: u32,
     ) -> Result<FfmpegDecoder, DecodeError> {
-        let frame_size = PixelFormat::Nv12.bytes_per_frame(width, height);
+        let frame_size = PixelFormat::Bgra.bytes_per_frame(width, height);
         let mut cmd = Command::new("ffmpeg");
         cmd.arg("-hide_banner")
             .arg("-loglevel")
@@ -142,7 +143,8 @@ impl FfmpegDecoder {
                             .send(Ok(DecodedFrame {
                                 width,
                                 height,
-                                format: PixelFormat::Nv12,
+                                format: PixelFormat::Bgra,
+                                rect: Rect::default(),
                                 data: buf.clone(),
                             }))
                             .is_err()
@@ -194,9 +196,10 @@ impl FfmpegDecoder {
 
 impl Decoder for FfmpegDecoder {
     fn submit(&mut self, packet: &FrameBufferPacket) -> Result<Vec<DecodedFrame>, DecodeError> {
-        if packet.width != self.width || packet.height != self.height {
-            // resolution changed (rotation / display change): restart the pipe
-            self.respawn(packet.width, packet.height, 60, HwAccel::Auto)?;
+        let (tw, th) = packet.tile_dims();
+        if tw != self.width || th != self.height {
+            // tile size changed (dirty rect size / rotation): restart the pipe
+            self.respawn(tw, th, 60, HwAccel::Auto)?;
         }
         if packet.payload.is_empty() {
             return Ok(Vec::new());
@@ -214,7 +217,10 @@ impl Decoder for FfmpegDecoder {
         let mut frames = Vec::new();
         while let Ok(res) = self.rx.try_recv() {
             match res {
-                Ok(f) => frames.push(f),
+                Ok(mut f) => {
+                    f.rect = packet.rect;
+                    frames.push(f);
+                }
                 Err(e) => return Err(DecodeError(format!("ffmpeg read: {}", e))),
             }
         }

@@ -12,6 +12,7 @@ use spacedesk_core::ffmpeg::codec_for_compression;
 use spacedesk_core::ffmpeg::{ffmpeg_available, FfmpegDecoder, HwAccel};
 use spacedesk_core::frame::{write_ppm, DecodedFrame};
 use spacedesk_core::protocol::{ClientType, Compression};
+use spacedesk_core::protocol::Transport;
 use spacedesk_core::session::{run, standard_ladder, ClientConfig, ServerEvent};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -33,6 +34,7 @@ struct Args {
     no_reconnect: bool,
     verbose: bool,
     client_type: u32,
+    transport: Transport,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -51,6 +53,7 @@ fn parse_args() -> Result<Args, String> {
     let mut no_reconnect = false;
     let mut verbose = false;
     let mut client_type = ClientType::WindowsRemoteMonitor as u32;
+    let mut transport = Transport::Tcp;
 
     while let Some(a) = args.next() {
         let mut next = |name: &str| -> Result<String, String> {
@@ -109,6 +112,13 @@ fn parse_args() -> Result<Args, String> {
             "--client-type" => {
                 client_type = next("--client-type")?.parse().map_err(|_| "bad --client-type")?
             }
+            "--transport" => {
+                transport = match next("--transport")?.as_str() {
+                    "tcp" => Transport::Tcp,
+                    "ws" => Transport::Ws,
+                    o => return Err(format!("unknown transport {}", o)),
+                }
+            }
             "--help" | "-h" => {
                 println!("{}", help());
                 std::process::exit(0);
@@ -135,6 +145,7 @@ fn parse_args() -> Result<Args, String> {
         no_reconnect,
         verbose,
         client_type,
+        transport,
     })
 }
 
@@ -178,9 +189,11 @@ fn main() {
     cfg.port = args.port;
     cfg.reconnect = !args.no_reconnect;
     cfg.verbose = args.verbose;
-    let ladder = standard_ladder(args.client_type, args.compression);
+    let ladder = standard_ladder(args.transport, args.client_type, args.compression);
     cfg.identification = ladder[0].clone();
+    cfg.identification.transport = args.transport;
     cfg.identification.compression = args.compression;
+    cfg.identification.fps = if args.frame_rate == 1 { 60 } else { 30 };
     cfg.identification.client_type = args.client_type;
     cfg.identification.quality = args.quality;
     cfg.identification.subsampling = args.subsampling;
@@ -264,19 +277,22 @@ fn main() {
                 if need_new {
                     decoder = match want_codec {
                         None => Some(ActiveDecoder::Raw(RawDecoder)),
-                        Some(codec) => match FfmpegDecoder::new(
-                            codec,
-                            args.hwaccel.clone(),
-                            p.width.max(1),
-                            p.height.max(1),
-                            if args.frame_rate == 1 { 60 } else { 30 },
-                        ) {
-                            Ok(d) => Some(ActiveDecoder::Ffmpeg(d)),
-                            Err(e) => {
-                                eprintln!("decoder init failed: {}", e);
-                                None
+                        Some(codec) => {
+                            let (tw, th) = p.tile_dims();
+                            match FfmpegDecoder::new(
+                                codec,
+                                args.hwaccel.clone(),
+                                tw,
+                                th,
+                                if args.frame_rate == 1 { 60 } else { 30 },
+                            ) {
+                                Ok(d) => Some(ActiveDecoder::Ffmpeg(d)),
+                                Err(e) => {
+                                    eprintln!("decoder init failed: {}", e);
+                                    None
+                                }
                             }
-                        },
+                        }
                     };
                 }
                 let decoded: Vec<DecodedFrame> = match &mut decoder {

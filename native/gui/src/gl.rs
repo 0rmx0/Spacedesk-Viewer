@@ -1,11 +1,15 @@
-//! Minimal OpenGL renderer (via `glow`): one fullscreen triangle for the video
-//! frame (NV12 via 2 textures with YUV->RGB in the fragment shader, or a single
-//! RGBA/BGRA texture), plus an alpha-blended quad for the remote cursor.
+//! OpenGL renderer (via `glow`).
+//!
+//! The remote screen is kept as an offscreen "canvas" texture (FBO). Each
+//! decoded tile (a dirty rect of the screen) is uploaded to a tile texture and
+//! drawn into the canvas at its rect with a textured quad — compositing happens
+//! entirely on the GPU. Presenting = one fullscreen triangle sampling the canvas,
+//! plus an alpha-blended quad for the remote cursor.
 
 use glow::HasContext;
 use spacedesk_core::frame::{DecodedFrame, PixelFormat};
 
-const VIDEO_VS: &str = r#"#version 330 core
+const PRESENT_VS: &str = r#"#version 330 core
 out vec2 v_uv;
 void main() {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
@@ -14,31 +18,12 @@ void main() {
 }
 "#;
 
-const VIDEO_FS: &str = r#"#version 330 core
-in vec2 v_uv;
-out vec4 frag;
-uniform sampler2D u_tex;
-uniform sampler2D u_tex_uv;
-uniform int u_mode; // 0 = single RGBA/BGRA texture, 1 = NV12
-void main() {
-    if (u_mode == 1) {
-        float y = texture(u_tex, v_uv).r;
-        vec2 uv = texture(u_tex_uv, v_uv).rg - 0.5;
-        frag = vec4(y + 1.402 * uv.y,
-                    y - 0.344136 * uv.x - 0.714136 * uv.y,
-                    y + 1.772 * uv.x, 1.0);
-    } else {
-        frag = texture(u_tex, v_uv);
-    }
-}
-"#;
-
-const CURSOR_VS: &str = r#"#version 330 core
-layout(location = 0) in vec2 a_pos;   // pixel coords (top-left origin)
+const QUAD_VS: &str = r#"#version 330 core
+layout(location = 0) in vec2 a_pos;   // unit quad
 layout(location = 1) in vec2 a_uv;
-uniform vec2 u_resolution;
-uniform vec2 u_offset;
-uniform vec2 u_size;
+uniform vec2 u_resolution;             // target size in pixels
+uniform vec2 u_offset;                 // dest rect origin in pixels (top-left)
+uniform vec2 u_size;                   // dest rect size in pixels
 out vec2 v_uv;
 void main() {
     vec2 pos = u_offset + a_pos * u_size;
@@ -49,7 +34,7 @@ void main() {
 }
 "#;
 
-const CURSOR_FS: &str = r#"#version 330 core
+const TEX_FS: &str = r#"#version 330 core
 in vec2 v_uv;
 out vec4 frag;
 uniform sampler2D u_tex;
@@ -68,60 +53,53 @@ pub struct CursorImage {
 
 pub struct Renderer {
     gl: glow::Context,
-    video_prog: glow::Program,
-    cursor_prog: glow::Program,
-    tex_main: glow::Texture,
-    tex_uv: glow::Texture,
+    present_prog: glow::Program,
+    quad_prog: glow::Program,
+    canvas_tex: glow::Texture,
+    canvas_fbo: glow::Framebuffer,
+    canvas_size: (u32, u32),
+    tile_tex: glow::Texture,
+    tile_size: (u32, u32),
     cursor_tex: glow::Texture,
-    _cursor_vbo: glow::Buffer,
-    cursor_vao: glow::VertexArray,
-    main_size: (u32, u32),
-    uv_size: (u32, u32),
     cursor_size: (u32, u32),
+    quad_vao: glow::VertexArray,
+    _quad_vbo: glow::Buffer,
 }
 
 impl Renderer {
     pub unsafe fn new(gl: glow::Context) -> Renderer {
-        let video_prog = link(&gl, VIDEO_VS, VIDEO_FS);
-        let cursor_prog = link(&gl, CURSOR_VS, CURSOR_FS);
+        let present_prog = link(&gl, PRESENT_VS, TEX_FS);
+        let quad_prog = link(&gl, QUAD_VS, TEX_FS);
 
-        let tex_main = gl.create_texture().unwrap();
-        gl.bind_texture(glow::TEXTURE_2D, Some(tex_main));
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+        let mk_tex = |gl: &glow::Context| {
+            let t = gl.create_texture().unwrap();
+            gl.bind_texture(glow::TEXTURE_2D, Some(t));
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            t
+        };
+        let canvas_tex = mk_tex(&gl);
+        let tile_tex = mk_tex(&gl);
+        let cursor_tex = mk_tex(&gl);
+        let canvas_fbo = gl.create_framebuffer().unwrap();
 
-        let tex_uv = gl.create_texture().unwrap();
-        gl.bind_texture(glow::TEXTURE_2D, Some(tex_uv));
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-
-        let cursor_tex = gl.create_texture().unwrap();
-        gl.bind_texture(glow::TEXTURE_2D, Some(cursor_tex));
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-
-        // unit quad (two triangles) for the cursor
-        let cursor_vao = gl.create_vertex_array().unwrap();
-        gl.bind_vertex_array(Some(cursor_vao));
-        let cursor_vbo = gl.create_buffer().unwrap();
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(cursor_vbo));
+        // unit quad (two triangles)
+        let quad_vao = gl.create_vertex_array().unwrap();
+        gl.bind_vertex_array(Some(quad_vao));
+        let quad_vbo = gl.create_buffer().unwrap();
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(quad_vbo));
         #[rustfmt::skip]
         let quad: [f32; 24] = [
-            // pos      // uv
-            0.0, 0.0,    0.0, 0.0,
-            1.0, 0.0,    1.0, 0.0,
-            1.0, 1.0,    1.0, 1.0,
-            0.0, 0.0,    0.0, 0.0,
-            1.0, 1.0,    1.0, 1.0,
-            0.0, 1.0,    0.0, 1.0,
+            0.0, 0.0,  0.0, 0.0,
+            1.0, 0.0,  1.0, 0.0,
+            1.0, 1.0,  1.0, 1.0,
+            0.0, 0.0,  0.0, 0.0,
+            1.0, 1.0,  1.0, 1.0,
+            0.0, 1.0,  0.0, 1.0,
         ];
-        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck_cast(&quad), glow::STATIC_DRAW);
+        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, f32_slice_as_u8(&quad), glow::STATIC_DRAW);
         gl.enable_vertex_attrib_array(0);
         gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 16, 0);
         gl.enable_vertex_attrib_array(1);
@@ -133,227 +111,133 @@ impl Renderer {
 
         Renderer {
             gl,
-            video_prog,
-            cursor_prog,
-            tex_main,
-            tex_uv,
+            present_prog,
+            quad_prog,
+            canvas_tex,
+            canvas_fbo,
+            canvas_size: (0, 0),
+            tile_tex,
+            tile_size: (0, 0),
             cursor_tex,
-            _cursor_vbo: cursor_vbo,
-            cursor_vao,
-            main_size: (0, 0),
-            uv_size: (0, 0),
             cursor_size: (0, 0),
+            quad_vao,
+            _quad_vbo: quad_vbo,
         }
     }
 
-    pub unsafe fn clear(&self) {
-        self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
-        self.gl.clear(glow::COLOR_BUFFER_BIT);
-    }
-
-    pub unsafe fn resize(&self, width: u32, height: u32) {
-        self.gl.viewport(0, 0, width as i32, height as i32);
-    }
-
-    unsafe fn alloc_main(gl: &glow::Context, tex: glow::Texture, w: u32, h: u32, format: u32, type_: u32, internal: i32) {
-        gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+    unsafe fn ensure_canvas(&mut self, w: u32, h: u32) {
+        if self.canvas_size == (w, h) {
+            return;
+        }
+        let gl = &self.gl;
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.canvas_tex));
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
         gl.tex_image_2d(
-            glow::TEXTURE_2D,
-            0,
-            internal,
-            w as i32,
-            h as i32,
-            0,
-            format,
-            type_,
-            None,
+            glow::TEXTURE_2D, 0, glow::RGBA as i32, w as i32, h as i32, 0,
+            glow::RGBA, glow::UNSIGNED_BYTE, None,
         );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.canvas_fbo));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.canvas_tex), 0,
+        );
+        gl.viewport(0, 0, w as i32, h as i32);
+        gl.clear_color(0.0, 0.0, 0.0, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        self.canvas_size = (w, h);
     }
 
-    /// Upload `frame` and draw it stretched to the whole viewport, then the
-    /// remote cursor if provided.
-    pub unsafe fn draw(
-        &mut self,
-        frame: &DecodedFrame,
-        viewport: (u32, u32),
-        cursor: Option<(&CursorImage, i32, i32)>,
-    ) {
-                self.gl.viewport(0, 0, viewport.0 as i32, viewport.1 as i32);
-        self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
-        self.gl.clear(glow::COLOR_BUFFER_BIT);
+    /// Composite one decoded tile into the canvas texture at its rect.
+    pub unsafe fn composite_tile(&mut self, frame: &DecodedFrame, screen: (u32, u32)) {
+        self.ensure_canvas(screen.0.max(1), screen.1.max(1));
+        let gl = &self.gl;
+        let (tw, th) = (frame.width.max(1), frame.height.max(1));
 
-        self.gl.use_program(Some(self.video_prog));
-        match frame.format {
-            PixelFormat::Nv12 => {
-                let (w, h) = (frame.width, frame.height);
-                let cw = (w + 1) / 2;
-                let ch = (h + 1) / 2;
-                if self.main_size != (w, h) {
-                    Self::alloc_main(&self.gl, self.tex_main, w, h, glow::RED, glow::UNSIGNED_BYTE, glow::R8 as i32);
-                    self.main_size = (w, h);
-                }
-                self.gl.active_texture(glow::TEXTURE0);
-                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
-                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-                self.gl.tex_sub_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    w as i32,
-                    h as i32,
-                    glow::RED,
-                    glow::UNSIGNED_BYTE,
-                    glow::PixelUnpackData::Slice(&frame.data[..(w * h) as usize]),
-                );
-                if self.uv_size != (cw, ch) {
-                    self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_uv));
-                    self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-                    self.gl.tex_image_2d(
-                        glow::TEXTURE_2D,
-                        0,
-                        glow::RG8 as i32,
-                        cw as i32,
-                        ch as i32,
-                        0,
-                        glow::RG,
-                        glow::UNSIGNED_BYTE,
-                        None,
-                    );
-                    self.uv_size = (cw, ch);
-                }
-                self.gl.active_texture(glow::TEXTURE1);
-                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_uv));
-                self.gl.tex_sub_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    cw as i32,
-                    ch as i32,
-                    glow::RG,
-                    glow::UNSIGNED_BYTE,
-                    glow::PixelUnpackData::Slice(&frame.data[(w * h) as usize..]),
-                );
-                self.gl.uniform_1_i32(
-                    self.gl.get_uniform_location(self.video_prog, "u_tex").as_ref(),
-                    0,
-                );
-                self.gl.uniform_1_i32(
-                    self.gl.get_uniform_location(self.video_prog, "u_tex_uv").as_ref(),
-                    1,
-                );
-                self.gl.uniform_1_i32(
-                    self.gl.get_uniform_location(self.video_prog, "u_mode").as_ref(),
-                    1,
-                );
-            }
-            PixelFormat::Bgra => {
-                if self.main_size != (frame.width, frame.height) {
-                    Self::alloc_main(&self.gl, self.tex_main, frame.width, frame.height, glow::BGRA, glow::UNSIGNED_BYTE, glow::RGBA as i32);
-                    self.main_size = (frame.width, frame.height);
-                }
-                self.gl.active_texture(glow::TEXTURE0);
-                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
-                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
-                self.gl.tex_sub_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    frame.width as i32,
-                    frame.height as i32,
-                    glow::BGRA,
-                    glow::UNSIGNED_BYTE,
-                    glow::PixelUnpackData::Slice(&frame.data),
-                );
-                self.gl.uniform_1_i32(
-                    self.gl.get_uniform_location(self.video_prog, "u_tex").as_ref(),
-                    0,
-                );
-                self.gl.uniform_1_i32(
-                    self.gl.get_uniform_location(self.video_prog, "u_mode").as_ref(),
-                    0,
-                );
-            }
-            PixelFormat::Rgba => {
-                if self.main_size != (frame.width, frame.height) {
-                    Self::alloc_main(&self.gl, self.tex_main, frame.width, frame.height, glow::RGBA, glow::UNSIGNED_BYTE, glow::RGBA as i32);
-                    self.main_size = (frame.width, frame.height);
-                }
-                self.gl.active_texture(glow::TEXTURE0);
-                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
-                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
-                self.gl.tex_sub_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    frame.width as i32,
-                    frame.height as i32,
-                    glow::RGBA,
-                    glow::UNSIGNED_BYTE,
-                    glow::PixelUnpackData::Slice(&frame.data),
-                );
-                self.gl.uniform_1_i32(
-                    self.gl.get_uniform_location(self.video_prog, "u_tex").as_ref(),
-                    0,
-                );
-                self.gl.uniform_1_i32(
-                    self.gl.get_uniform_location(self.video_prog, "u_mode").as_ref(),
-                    0,
-                );
-            }
+        if self.tile_size != (tw, th) {
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.tile_tex));
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+            gl.tex_image_2d(
+                glow::TEXTURE_2D, 0, glow::RGBA as i32, tw as i32, th as i32, 0,
+                glow::RGBA, glow::UNSIGNED_BYTE, None,
+            );
+            self.tile_size = (tw, th);
         }
-        self.gl.draw_arrays(glow::TRIANGLES, 0, 3);
+        let (fmt, align) = match frame.format {
+            PixelFormat::Bgra => (glow::BGRA, 4),
+            PixelFormat::Rgba => (glow::RGBA, 4),
+            PixelFormat::Nv12 => (glow::RGBA, 4), // not produced by current decoders
+        };
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.tile_tex));
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, align);
+        gl.tex_sub_image_2d(
+            glow::TEXTURE_2D, 0, 0, 0, tw as i32, th as i32,
+            fmt, glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(&frame.data),
+        );
+
+        // draw the tile into the canvas FBO at its rect
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.canvas_fbo));
+        gl.viewport(0, 0, screen.0.max(1) as i32, screen.1.max(1) as i32);
+        gl.use_program(Some(self.quad_prog));
+        gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_resolution").as_ref(), screen.0 as f32, screen.1 as f32);
+        gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_offset").as_ref(), frame.rect.x as f32, frame.rect.y as f32);
+        gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_size").as_ref(), tw as f32, th as f32);
+        gl.active_texture(glow::TEXTURE0);
+        gl.bind_texture(glow::TEXTURE_2D, Some(self.tile_tex));
+        gl.uniform_1_i32(gl.get_uniform_location(self.quad_prog, "u_tex").as_ref(), 0);
+        gl.bind_vertex_array(Some(self.quad_vao));
+        gl.draw_arrays(glow::TRIANGLES, 0, 6);
+        gl.bind_vertex_array(None);
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
+
+    /// Draw the canvas to the window, plus the remote cursor if any.
+    pub unsafe fn present(&mut self, viewport: (u32, u32), cursor: Option<(&CursorImage, i32, i32)>) {
+        let gl = &self.gl;
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        gl.viewport(0, 0, viewport.0 as i32, viewport.1 as i32);
+        gl.clear_color(0.0, 0.0, 0.0, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+
+        if self.canvas_size != (0, 0) {
+            gl.use_program(Some(self.present_prog));
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.canvas_tex));
+            gl.uniform_1_i32(gl.get_uniform_location(self.present_prog, "u_tex").as_ref(), 0);
+            gl.draw_arrays(glow::TRIANGLES, 0, 3);
+        }
 
         if let Some((cur, cx, cy)) = cursor {
             if self.cursor_size != (cur.width, cur.height) {
-                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
-                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
-                self.gl.tex_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    glow::RGBA as i32,
-                    cur.width as i32,
-                    cur.height as i32,
-                    0,
-                    glow::RGBA,
-                    glow::UNSIGNED_BYTE,
-                    Some(&cur.rgba),
+                gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
+                gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+                gl.tex_image_2d(
+                    glow::TEXTURE_2D, 0, glow::RGBA as i32, cur.width as i32, cur.height as i32, 0,
+                    glow::RGBA, glow::UNSIGNED_BYTE, Some(&cur.rgba),
                 );
                 self.cursor_size = (cur.width, cur.height);
             }
-            self.gl.enable(glow::BLEND);
-            self.gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-            self.gl.use_program(Some(self.cursor_prog));
-            self.gl.uniform_2_f32(
-                self.gl.get_uniform_location(self.cursor_prog, "u_resolution").as_ref(),
-                viewport.0 as f32,
-                viewport.1 as f32,
-            );
-            self.gl.uniform_2_f32(
-                self.gl.get_uniform_location(self.cursor_prog, "u_offset").as_ref(),
-                (cx - cur.x_hot) as f32,
-                (cy - cur.y_hot) as f32,
-            );
-            self.gl.uniform_2_f32(
-                self.gl.get_uniform_location(self.cursor_prog, "u_size").as_ref(),
-                cur.width as f32,
-                cur.height as f32,
-            );
-            self.gl.active_texture(glow::TEXTURE0);
-            self.gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
-            self.gl.uniform_1_i32(
-                self.gl.get_uniform_location(self.cursor_prog, "u_tex").as_ref(),
-                0,
-            );
-            self.gl.bind_vertex_array(Some(self.cursor_vao));
-            self.gl.draw_arrays(glow::TRIANGLES, 0, 6);
-            self.gl.bind_vertex_array(None);
-            self.gl.disable(glow::BLEND);
+            gl.enable(glow::BLEND);
+            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            gl.use_program(Some(self.quad_prog));
+            gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_resolution").as_ref(), viewport.0 as f32, viewport.1 as f32);
+            gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_offset").as_ref(), (cx - cur.x_hot) as f32, (cy - cur.y_hot) as f32);
+            gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_size").as_ref(), cur.width as f32, cur.height as f32);
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
+            gl.uniform_1_i32(gl.get_uniform_location(self.quad_prog, "u_tex").as_ref(), 0);
+            gl.bind_vertex_array(Some(self.quad_vao));
+            gl.draw_arrays(glow::TRIANGLES, 0, 6);
+            gl.bind_vertex_array(None);
+            gl.disable(glow::BLEND);
         }
+    }
+
+    pub unsafe fn clear_screen(&self) {
+        let gl = &self.gl;
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        gl.clear_color(0.0, 0.0, 0.0, 1.0);
+        gl.clear(glow::COLOR_BUFFER_BIT);
     }
 }
 
@@ -382,19 +266,18 @@ unsafe fn compile(gl: &glow::Context, kind: u32, src: &str) -> glow::Shader {
     sh
 }
 
-fn bytemuck_cast(slice: &[f32]) -> &[u8] {
+fn f32_slice_as_u8(slice: &[f32]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(slice.as_ptr() as *const u8, slice.len() * 4) }
 }
 
 /// Convert a spacedesk cursor bitmap payload to RGBA.
-/// flags: 1 = monochrome (1bpp AND/XOR mask), 2 = default, 4 = masked color (BGRA).
+/// flags: 1 = monochrome (1bpp AND/XOR mask), 4 = masked color (BGRA pixels).
 pub fn cursor_payload_to_rgba(width: u32, height: u32, pitch: u32, flags: u32, payload: &[u8]) -> Vec<u8> {
     let w = width as usize;
     let h = height as usize;
     let mut out = vec![0u8; w * h * 4];
     match flags {
         4 => {
-            // masked color: BGRA pixels
             let pitch = if pitch == 0 { w * 4 } else { pitch as usize };
             for y in 0..h {
                 for x in 0..w {
@@ -411,7 +294,6 @@ pub fn cursor_payload_to_rgba(width: u32, height: u32, pitch: u32, flags: u32, p
             }
         }
         1 => {
-            // monochrome: 1bpp mask rows (AND mask then XOR mask), 32-bit aligned rows
             let row_bytes = ((w + 31) / 32) * 4;
             let and_len = row_bytes * h;
             for y in 0..h {
@@ -429,9 +311,7 @@ pub fn cursor_payload_to_rgba(width: u32, height: u32, pitch: u32, flags: u32, p
                 }
             }
         }
-        _ => {
-            // unknown: leave transparent
-        }
+        _ => {}
     }
     out
 }

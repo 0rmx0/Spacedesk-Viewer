@@ -38,7 +38,8 @@ impl Decoder for RawDecoder {
                 )))
             }
         };
-        let expected = format.bytes_per_frame(packet.width, packet.height);
+        let (tw, th) = packet.tile_dims();
+        let expected = format.bytes_per_frame(tw, th);
         if packet.payload.len() < expected {
             return Err(DecodeError(format!(
                 "raw frame too small: {} < {} bytes",
@@ -47,9 +48,10 @@ impl Decoder for RawDecoder {
             )));
         }
         Ok(vec![DecodedFrame {
-            width: packet.width,
-            height: packet.height,
+            width: tw,
+            height: th,
             format,
+            rect: packet.rect,
             data: packet.payload[..expected].to_vec(),
         }])
     }

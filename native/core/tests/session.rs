@@ -3,6 +3,7 @@
 //! frames / cursor packets, and validates the client's ACKs and KVM packets.
 
 use spacedesk_core::protocol::{self, *};
+use spacedesk_core::protocol::Transport;
 use spacedesk_core::session::{run, ClientCommand, ClientConfig, ServerEvent};
 use spacedesk_core::ws::WsMessage;
 use std::io::{Read, Write};
@@ -215,6 +216,7 @@ fn session_handshake_frames_acks_and_kvm() {
     cfg.host = "127.0.0.1".to_string();
     cfg.port = port;
     cfg.reconnect = false;
+    cfg.identification.transport = Transport::Ws;
     cfg.identification.compression = Compression::H264 as u32;
 
     let (ev_tx, ev_rx) = mpsc::channel();
@@ -309,5 +311,105 @@ fn raw_decoder_passthrough() {
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0].format, PixelFormat::Bgra);
     assert_eq!(frames[0].data, payload);
+    assert_eq!(frames[0].rect, Rect { x: 0, y: 0, x2: 4, y2: 4 });
     let _ = WsMessage::Binary(vec![]); // silence unused import in some cfgs
+}
+
+
+// ---------------------------------------------------------------------------
+// Raw TCP (native) transport test: no HTTP/WS handshake, packets are raw.
+// ---------------------------------------------------------------------------
+
+fn tcp_read_packet(stream: &mut TcpStream, buf: &mut Vec<u8>) -> Vec<u8> {
+    loop {
+        if buf.len() >= HEADER_LEN {
+            let plen = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+            if buf.len() >= HEADER_LEN + plen {
+                let pkt = buf[..HEADER_LEN + plen].to_vec();
+                buf.drain(..HEADER_LEN + plen);
+                return pkt;
+            }
+        }
+        let mut tmp = [0u8; 8192];
+        let n = stream.read(&mut tmp).unwrap();
+        assert!(n > 0, "server closed");
+        buf.extend_from_slice(&tmp[..n]);
+    }
+}
+
+#[test]
+fn session_raw_tcp_native_handshake_ping_echo_ack() {
+    use std::io::Write;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut buf = Vec::new();
+
+        // 1) raw identification packet, no HTTP handshake
+        let ident = tcp_read_packet(&mut stream, &mut buf);
+        assert_eq!(ident.len(), PACKET_LEN);
+        assert_eq!(get_u32(&ident, 0), 0); // Identification
+        assert_eq!(get_u32(&ident, 4), PAYLOAD_LEN as u32);
+        assert_eq!(get_u32(&ident, 8), VERSION_MAJOR);
+        assert_eq!(get_u32(&ident, 12), VERSION_MINOR);
+        assert_eq!(get_u32(&ident, 16), 0); // WindowsRemoteMonitor
+        assert_eq!(get_u32(&ident, 20), 3); // native layout
+        assert_eq!(get_u32(&ident, 28), 2);
+        assert_eq!(get_u32(&ident, 36), 0x10003);
+        assert_eq!(get_u16(&ident, 44), 30); // real fps
+        assert_eq!(get_u16(&ident, 46), 4);
+        let payload = &ident[HEADER_LEN..];
+        assert_eq!(get_u32(payload, 0), 1); // native payload magic
+
+        // 2) send a Ping (type 1) with payload; client must echo it back
+        let mut ping = vec![0u8; HEADER_LEN + 4];
+        put_u32(&mut ping, 0, 1);
+        put_u32(&mut ping, 4, 4);
+        ping[HEADER_LEN..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        stream.write_all(&ping).unwrap();
+        let echo = tcp_read_packet(&mut stream, &mut buf);
+        assert_eq!(get_u32(&echo, 0), 1, "expected echoed ping");
+        assert_eq!(&echo[HEADER_LEN..], &[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        // 3) send a full-screen raw frame (type 2, 4x4, BGRA, non-fragmented)
+        let raw: Vec<u8> = (0..64u8).collect();
+        let f = frame_packet(4, 4, 4, 0, 0, &raw);
+        stream.write_all(&f).unwrap();
+        // expect a FlowControlAck
+        let ack = tcp_read_packet(&mut stream, &mut buf);
+        assert_eq!(get_u32(&ack, 0), HeaderType::FlowControlAck as u32);
+
+        // 4) expect a KVM mouse packet
+        let mv = tcp_read_packet(&mut stream, &mut buf);
+        assert_eq!(get_u32(&mv, 0), HeaderType::Mouse as u32);
+        assert_eq!(get_u32(&mv, 20), mouse_events::MOVE);
+    });
+
+    let mut cfg = ClientConfig::default();
+    cfg.host = "127.0.0.1".to_string();
+    cfg.port = port;
+    cfg.reconnect = false;
+    cfg.identification.transport = Transport::Tcp;
+    cfg.identification.client_type = 0;
+    cfg.identification.compression = Compression::H264 as u32;
+
+    let (ev_tx, ev_rx) = mpsc::channel();
+    let (cmd_tx, cmd_rx) = mpsc::channel();
+    let session_thread = std::thread::spawn(move || run(&cfg, ev_tx, cmd_rx));
+
+    assert!(matches!(recv_event(&ev_rx, 5000), ServerEvent::Connected));
+    match recv_event(&ev_rx, 5000) {
+        ServerEvent::Frame(p) => {
+            assert_eq!(p.payload, (0..64u8).collect::<Vec<u8>>());
+            assert_eq!(p.tile_dims(), (4, 4));
+        }
+        other => panic!("expected frame, got {:?}", other),
+    }
+    cmd_tx.send(ClientCommand::MouseMove { dx: 5, dy: 6 }).unwrap();
+    // wait for server thread to finish reading our packets
+    server.join().unwrap();
+    let _ = session_thread.join();
 }

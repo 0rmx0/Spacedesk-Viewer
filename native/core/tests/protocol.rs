@@ -10,6 +10,7 @@ fn u32at(buf: &[u8], off: usize) -> u32 {
 #[test]
 fn identification_packet_layout() {
     let ident = Identification {
+        transport: Transport::Ws,
         client_type: ClientType::WindowsRemoteMonitor as u32,
         compression: Compression::H264 as u32,
         quality: 70,
@@ -207,4 +208,42 @@ fn parse_incomplete_packet_returns_remainder() {
     let (packets, rest) = parse_packets(&buf);
     assert!(packets.is_empty());
     assert_eq!(rest.len(), buf.len());
+}
+
+#[test]
+fn identification_packet_native_tcp_layout() {
+    let ident = Identification {
+        transport: Transport::Tcp,
+        client_type: ClientType::WindowsRemoteMonitor as u32,
+        compression: Compression::H264 as u32,
+        quality: 70,
+        fps: 60,
+        resolution: (1920, 1080),
+        resolution_custom: None,
+        client_name: "Test".to_string(),
+        ..Default::default()
+    };
+    let pkt = identification_packet(&ident);
+    assert_eq!(pkt.len(), PACKET_LEN);
+    assert_eq!(u32at(&pkt, 0), 0);
+    assert_eq!(u32at(&pkt, 4), PAYLOAD_LEN as u32);
+    assert_eq!(u32at(&pkt, 8), VERSION_MAJOR);
+    assert_eq!(u32at(&pkt, 12), VERSION_MINOR);
+    assert_eq!(u32at(&pkt, 16), 0); // WindowsRemoteMonitor
+    assert_eq!(u32at(&pkt, 20), 3);
+    assert_eq!(u32at(&pkt, 24), 1); // H264
+    assert_eq!(u32at(&pkt, 28), 2);
+    assert_eq!(u32at(&pkt, 32), 70);
+    assert_eq!(u32at(&pkt, 36), 0x10003);
+    assert_eq!(get_u16(&pkt, 44), 60); // real fps
+    assert_eq!(get_u16(&pkt, 46), 4);
+    assert_eq!(u32at(&pkt, 48), 1);
+    assert_eq!(u32at(&pkt, 52), 1920);
+    assert_eq!(u32at(&pkt, 88), 1080);
+    let payload = &pkt[HEADER_LEN..];
+    assert_eq!(u32at(payload, 0), 1); // native payload magic
+    // GUID as UTF-16LE starting at offset 4: '{' = 0x7B
+    assert_eq!(get_u16(payload, 4), 0x7B);
+    // name at 78
+    assert_eq!(get_u16(payload, 78), 'T' as u16);
 }

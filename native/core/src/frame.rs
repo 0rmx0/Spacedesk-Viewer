@@ -28,6 +28,8 @@ pub struct DecodedFrame {
     pub width: u32,
     pub height: u32,
     pub format: PixelFormat,
+    /// Destination rect on the remote screen (tile position), in screen pixels.
+    pub rect: crate::protocol::Rect,
     /// Packed pixel data (`format.bytes_per_frame(width, height)` bytes).
     pub data: Vec<u8>,
 }

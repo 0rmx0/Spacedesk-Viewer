@@ -1,17 +1,19 @@
-//! Session management: connect to a spacedesk server over WebSocket, perform the
-//! identification handshake, reassemble fragmented frames, send flow-control ACKs
-//! and forward KVM input commands.
+//! Session management: connect to a spacedesk driver (raw TCP or WebSocket on
+//! port 28252), perform the identification handshake, reassemble fragmented
+//! frames, echo keep-alive pings, send flow-control ACKs and forward KVM input.
 //!
-//! If the server closes the connection immediately after the identification packet
-//! (no frame received), [`run`] automatically retries with the next identification
-//! in `fallback_identifications` — e.g. H264 as WindowsRemoteMonitor first, then
-//! JPEG as WebBrowser (the combination the official HTML5 viewer uses).
+//! If the driver closes the connection immediately after the identification
+//! packet (no frame received), [`run`] automatically retries with the next
+//! identification in the ladder — native TCP first (what current drivers
+//! expect from native viewers), then the HTML5-viewer WebSocket combination.
 
 use crate::decoder::is_complete_jpeg;
 use crate::protocol::{
-    self, CursorBitmapPacket, FrameBufferPacket, Identification, MouseButton,
+    self, ClientType, Compression, CursorBitmapPacket, FrameBufferPacket, Identification,
+    MouseButton, Transport,
 };
-use crate::ws::{WsClient, WsError, WsErrorKind, WsMessage};
+use crate::transport::Conn;
+use crate::ws::{WsError, WsErrorKind};
 use std::net::ToSocketAddrs;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -47,31 +49,35 @@ impl Default for ClientConfig {
     }
 }
 
-/// Build the standard identification ladder: H264 for native client types first
-/// (best performance), then the HTML5-viewer combination (WebBrowser + JPEG),
-/// then uncompressed. `primary` is tried first; the rest become fallbacks.
-pub fn standard_ladder(primary_client_type: u32, primary_compression: u32) -> Vec<Identification> {
-    let combos: [(u32, u32); 4] = [
-        (ClientType::WindowsRemoteMonitor as u32, Compression::H264 as u32),
-        (ClientType::KvmWindows as u32, Compression::H264 as u32),
-        (ClientType::WebBrowser as u32, Compression::Jpeg as u32),
-        (ClientType::WebBrowser as u32, Compression::Off as u32),
+/// Standard identification ladder: native TCP + H264 first (best performance),
+/// then native TCP + JPEG (what reverse-engineered native clients use), then
+/// the HTML5-viewer WebSocket + JPEG combination, then WS + raw.
+/// `primary_*` is tried first; the rest become fallbacks.
+pub fn standard_ladder(
+    primary_transport: Transport,
+    primary_client_type: u32,
+    primary_compression: u32,
+) -> Vec<Identification> {
+    let combos: [(Transport, u32, u32); 4] = [
+        (Transport::Tcp, ClientType::WindowsRemoteMonitor as u32, Compression::H264 as u32),
+        (Transport::Tcp, ClientType::WindowsRemoteMonitor as u32, Compression::Jpeg as u32),
+        (Transport::Ws, ClientType::WebBrowser as u32, Compression::Jpeg as u32),
+        (Transport::Ws, ClientType::WebBrowser as u32, Compression::Off as u32),
     ];
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let ordered = std::iter::once((primary_client_type, primary_compression))
+    let ordered = std::iter::once((primary_transport, primary_client_type, primary_compression))
         .chain(combos.iter().copied())
-        .filter(|c| seen.insert(*c));
-    for (ct, comp) in ordered {
+        .filter(|c| seen.insert((c.0, c.1, c.2)));
+    for (tr, ct, comp) in ordered {
         let mut ident = Identification::default();
+        ident.transport = tr;
         ident.client_type = ct;
         ident.compression = comp;
         out.push(ident);
     }
     out
 }
-
-use protocol::{ClientType, Compression};
 
 #[derive(Debug)]
 pub enum ServerEvent {
@@ -125,7 +131,10 @@ pub fn run(
     // identification ladder: primary first, then fallbacks
     let mut ladder = vec![cfg.identification.clone()];
     for f in &cfg.fallback_identifications {
-        if !ladder.iter().any(|i| i.client_type == f.client_type && i.compression == f.compression) {
+        if !ladder
+            .iter()
+            .any(|i| i.transport == f.transport && i.client_type == f.client_type && i.compression == f.compression)
+        {
             ladder.push(f.clone());
         }
     }
@@ -137,9 +146,10 @@ pub fn run(
         vlog(
             cfg,
             &format!(
-                "connecting to {}:{} with client_type={} compression={} (ladder {}/{})",
+                "connecting to {}:{} transport={:?} client_type={} compression={} (ladder {}/{})",
                 cfg_i.host,
                 cfg_i.port,
+                cfg_i.identification.transport,
                 cfg_i.identification.client_type,
                 cfg_i.identification.compression,
                 ladder_idx + 1,
@@ -156,16 +166,16 @@ pub fn run(
                 };
                 send_event(&events, ServerEvent::Disconnected { reason: reason.clone() });
                 if rejected && more {
+                    let prev = ladder[ladder_idx].clone();
                     ladder_idx += 1;
                     attempts = 0;
+                    let next = &ladder[ladder_idx];
                     send_event(
                         &events,
                         ServerEvent::Error(format!(
-                            "server rejected identification (client_type={} compression={}) with no frames; trying next: client_type={} compression={}",
-                            ladder[ladder_idx - 1].client_type,
-                            ladder[ladder_idx - 1].compression,
-                            ladder[ladder_idx].client_type,
-                            ladder[ladder_idx].compression,
+                            "server rejected identification (transport={:?} client_type={} compression={}) with no frames; trying next: transport={:?} client_type={} compression={}",
+                            prev.transport, prev.client_type, prev.compression,
+                            next.transport, next.client_type, next.compression,
                         )),
                     );
                     continue;
@@ -209,24 +219,40 @@ fn connect_once(
     } else {
         addr_str.clone()
     };
-    let mut ws = WsClient::connect(addr, &host_header, cfg.connect_timeout)?;
-    vlog(cfg, "websocket handshake ok, sending identification");
-    ws.send_binary(&protocol::identification_packet(&cfg.identification))?;
+    let mut conn = Conn::connect(
+        addr,
+        &host_header,
+        cfg.identification.transport,
+        cfg.connect_timeout,
+    )?;
+    vlog(cfg, "connected, sending identification");
+    conn.send_packet(&protocol::identification_packet(&cfg.identification))?;
     if !send_event(events, ServerEvent::Connected) {
         return Ok(ConnectOutcome {
             reason: "event receiver dropped".to_string(),
             frames: 0,
             elapsed: start.elapsed(),
-            close: ws.last_close,
+            close: conn.last_close(),
         });
     }
 
-    ws.set_read_timeout(Some(Duration::from_millis(15)))?;
+    conn.set_read_timeout(Some(Duration::from_millis(15)))?;
 
     let mut leftover: Vec<u8> = Vec::new();
     let mut pending: Vec<u8> = Vec::new();
     let mut frag_count = 0u32;
     let mut frames = 0u64;
+
+    macro_rules! outcome {
+        ($reason:expr) => {
+            return Ok(ConnectOutcome {
+                reason: $reason.to_string(),
+                frames,
+                elapsed: start.elapsed(),
+                close: conn.last_close(),
+            })
+        };
+    }
 
     loop {
         // drain input commands first (low latency input even while frames stream in)
@@ -245,21 +271,19 @@ fn connect_once(
                     protocol::touch_packet(down, x, y, res_x, res_y)
                 }
                 ClientCommand::Disconnect => {
-                    let _ = ws.send_binary(&protocol::disconnect_packet());
-                    let _ = ws.send_close(1000);
-                    return Ok(ConnectOutcome {
-                        reason: "disconnect requested".to_string(),
-                        frames,
-                        elapsed: start.elapsed(),
-                        close: ws.last_close,
-                    });
+                    let _ = conn.send_packet(&protocol::disconnect_packet());
+                    let _ = conn.close(1000);
+                    outcome!("disconnect requested");
                 }
             };
-            ws.send_binary(&packet)?;
+            conn.send_packet(&packet)?;
         }
 
-        match ws.read_message() {
-            Ok(Some(WsMessage::Binary(data))) => {
+        match conn.read_message() {
+            Ok(Some(data)) => {
+                if data.is_empty() {
+                    continue;
+                }
                 if cfg.verbose && data.len() >= 8 {
                     vlog(
                         cfg,
@@ -284,12 +308,7 @@ fn connect_once(
                             }
                             if is_complete_jpeg(&p.payload) {
                                 if !send_event(events, ServerEvent::Frame(p)) {
-                                    return Ok(ConnectOutcome {
-                                        reason: "event receiver dropped".to_string(),
-                                        frames,
-                                        elapsed: start.elapsed(),
-                                        close: ws.last_close,
-                                    });
+                                    outcome!("event receiver dropped");
                                 }
                             } else {
                                 pending.extend_from_slice(&p.payload);
@@ -298,18 +317,21 @@ fn connect_once(
                                     let mut p = p;
                                     p.payload = payload;
                                     if !send_event(events, ServerEvent::Frame(p)) {
-                                        return Ok(ConnectOutcome {
-                                            reason: "event receiver dropped".to_string(),
-                                            frames,
-                                            elapsed: start.elapsed(),
-                                            close: ws.last_close,
-                                        });
+                                        outcome!("event receiver dropped");
                                     }
                                 }
                             }
                             if !frag || frag_count % 4 == 0 {
-                                ws.send_binary(&protocol::flow_control_ack())?;
+                                conn.send_packet(&protocol::flow_control_ack())?;
                             }
+                        }
+                        protocol::Packet::Ping(payload) => {
+                            // keep-alive: echo the ping back, otherwise the driver throttles
+                            let mut echo = vec![0u8; protocol::HEADER_LEN];
+                            protocol::put_u32(&mut echo, 0, protocol::HeaderType::Ping as u32);
+                            protocol::put_u32(&mut echo, 4, payload.len() as u32);
+                            echo.extend_from_slice(&payload);
+                            let _ = conn.send_packet(&echo);
                         }
                         protocol::Packet::Visibility(v) => {
                             send_event(events, ServerEvent::Visibility(v));
@@ -327,38 +349,18 @@ fn connect_once(
                             send_event(events, ServerEvent::Rotation(v));
                         }
                         protocol::Packet::Disconnect => {
-                            let _ = ws.send_close(1000);
-                            return Ok(ConnectOutcome {
-                                reason: "server sent disconnect".to_string(),
-                                frames,
-                                elapsed: start.elapsed(),
-                                close: ws.last_close,
-                            });
+                            let _ = conn.close(1000);
+                            outcome!("server sent disconnect");
                         }
-                        protocol::Packet::Ping | protocol::Packet::Unknown { .. } => {}
+                        protocol::Packet::Unknown { .. } => {}
                     }
                 }
             }
-            Ok(Some(WsMessage::Text(_))) => {}
-            Ok(None) => {
-                return Ok(ConnectOutcome {
-                    reason: "connection closed by server".to_string(),
-                    frames,
-                    elapsed: start.elapsed(),
-                    close: ws.last_close,
-                })
-            }
+            Ok(None) => outcome!("connection closed by server"),
             Err(e) => match e.kind {
                 // read timeout: just loop back to drain input commands
                 WsErrorKind::Timeout => continue,
-                WsErrorKind::Closed => {
-                    return Ok(ConnectOutcome {
-                        reason: e.detail,
-                        frames,
-                        elapsed: start.elapsed(),
-                        close: ws.last_close,
-                    })
-                }
+                WsErrorKind::Closed => outcome!(e.detail),
                 _ => return Err(e),
             },
         }

@@ -5,11 +5,19 @@ partir de zéro en **Rust** (l'app Electron du dépôt consomme ~200 Mo et fait 
 décodage logiciel dans Chromium ; ici le décodage H264 est fait en **matériel via
 VA-API** et l'affichage en **OpenGL**, avec conversion YUV→RGB sur le GPU).
 
-Le protocole binaire spacedesk (v4.8, WebSocket sur le port **28252**) a été
-extrait du viewer HTML5 officiel embarqué dans ce dépôt (`src/spacedesk.min.js`) :
-handshake `Identification`, trames `FrameBuffer` (H264 / JPEG / raw, éventuellement
-fragmentées), acquittements `FlowControlAck`, curseur, visibilité, et envoi
-clavier/souris/touch `KVM`.
+Le protocole binaire spacedesk (v4.8, port **28252**) a été extrait du viewer
+HTML5 officiel embarqué dans ce dépôt (`src/spacedesk.min.js`) **et** confirmé
+contre des clients natifs reverse-engineered qui parlent au driver en **TCP
+brut** (le port 28252 sniffe les premiers octets : `GET ...` -> mode WebSocket
+du viewer HTML5, sinon paquets binaires bruts natifs). Notre client utilise le
+**TCP brut par défaut** (`--transport ws` pour forcer le mode WebSocket) avec
+le handshake natif (clientType=WindowsRemoteMonitor, GUID UTF-16LE dans le
+payload, fps réel à l'offset 44, flags 0x10003 à l'offset 36). Les trames
+`FrameBuffer` arrivent en **tuiles** (rect de destination + JPEG/H264/raw,
+éventuellement fragmentées x4) : elles sont compositées sur le GPU (FBO +
+quad texturé). Les `Ping` du serveur sont ré-échés (keep-alive), les
+acquittements `FlowControlAck` sont envoyés après chaque trame complète (ou
+tous les 4 fragments), et le clavier/souris/touch `KVM` est renvoyé.
 
 ## Architecture
 
@@ -26,12 +34,13 @@ native/
 └── examples/mock_server.py   faux serveur spacedesk pour tester sans Windows
 ```
 
-- **Performance** : priorité au H264 (`compression=1`, `clientType=WindowsRemoteMonitor`),
-  décodage VA-API (`-hwaccel vaapi -hwaccel_output_format nv12`) quand un GPU
-  Intel/AMD est présent, upload d'une texture NV12 (2 plans) et conversion
-  YUV→RGB dans le shader. Repli automatique : JPEG (`--compression jpeg`),
-  puis raw (`--compression off`). Le décodage passe par le binaire `ffmpeg`
-  (pas de bindings FFI fragiles) : installez le paquet `ffmpeg`.
+- **Performance** : priorité au H264 (`compression=1`), décodage VA-API
+  (`-hwaccel vaapi`) quand un GPU Intel/AMD est présent, sortie **BGRA** de
+  ffmpeg uploadée telle quelle en texture OpenGL (zéro conversion CPU côté
+  client), compositing des tuiles sur GPU. Repli automatique d'identification :
+  TCP+H264 -> TCP+JPEG -> WS+JPEG (combo du viewer HTML5) -> WS+raw.
+  Le décodage passe par le binaire `ffmpeg` (pas de bindings FFI fragiles) :
+  installez le paquet `ffmpeg`.
 - **Entrées** : souris envoyée en deltas relatifs (comme le viewer HTML5) avec
   `set_cursor_grab`, molette, boutons ; clavier via table VK Windows
   (`F11` = plein écran, `Échap` = libère la souris).
@@ -71,19 +80,21 @@ native/cli/target/release/spacedesk-cli 192.168.1.10 --compression h264 \
     --frames 300 --dump /tmp/frames
 
 # Test complet sans serveur Windows (faux serveur spacedesk en Python)
-python3 native/examples/mock_server.py --port 28252 --frames 60
+python3 native/examples/mock_server.py --port 28252 --frames 60 --tcp   # mode natif TCP
 native/cli/target/release/spacedesk-cli 127.0.0.1 --compression off \
-    --frames 60 --dump /tmp/frames --no-reconnect
+    --frames 60 --dump /tmp/frames --no-reconnect -v
 ```
 
-Options communes : `--port`, `--compression h264|jpeg|off`, `--quality 1-100`,
-`--subsampling 0|1|2`, `--fps 30|60`, `--resolution WxH|client`,
-`--hwaccel auto|vaapi|none`, `--no-reconnect` (voir `--help`).
+Options communes : `--port`, `--transport tcp|ws`, `--compression h264|jpeg|off`,
+`--client-type 0|1|3`, `--quality 1-100`, `--subsampling 0|1|2`, `--fps 30|60`,
+`--resolution WxH|client`, `--hwaccel auto|vaapi|none`, `--no-reconnect`,
+`-v/--verbose` (voir `--help`).
 
 ## Protocole (référence rapide)
 
-- WebSocket binaire vers `ws://<serveur>:28252`, un paquet par message :
-  header 128 octets (LE) + payload (`header[4..8]` = taille du payload).
+- TCP brut vers `<serveur>:28252` (mode natif, par défaut) ou WebSocket
+  binaire `ws://<serveur>:28252` (mode viewer HTML5, `--transport ws`).
+  Un paquet = header 128 octets (LE) + payload (`header[4..8]` = taille).
 - `Identification` (client→serveur, 128+334 octets) : version 4.8, clientType,
   compression, qualité, sous-échantillonnage, fps, résolutions (offsets 8..92).
 - `FrameBuffer` (serveur→client) : width@8, height@12, pitch@16, format@20,

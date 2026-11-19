@@ -19,7 +19,7 @@ use raw_window_handle::HasRawWindowHandle;
 use spacedesk_core::decoder::{Decoder, RawDecoder};
 use spacedesk_core::ffmpeg::{codec_for_compression, ffmpeg_available, FfmpegDecoder, HwAccel};
 use spacedesk_core::frame::DecodedFrame;
-use spacedesk_core::protocol::{ClientType, Compression, CursorBitmapPacket, MouseButton};
+use spacedesk_core::protocol::{ClientType, Compression, CursorBitmapPacket, MouseButton, Transport};
 use spacedesk_core::session::{run, standard_ladder, ClientCommand, ClientConfig, ServerEvent};
 use std::num::NonZeroU32;
 use std::sync::mpsc::{self, Receiver};
@@ -43,6 +43,7 @@ struct Args {
     no_reconnect: bool,
     verbose: bool,
     client_type: u32,
+    transport: Transport,
 }
 
 fn help() -> &'static str {
@@ -77,6 +78,7 @@ fn parse_args() -> Result<Args, String> {
     let mut no_reconnect = false;
     let mut verbose = false;
     let mut client_type = ClientType::WindowsRemoteMonitor as u32;
+    let mut transport = Transport::Tcp;
     while let Some(a) = args.next() {
         let mut next = |name: &str| args.next().ok_or_else(|| format!("missing value for {}", name));
         match a.as_str() {
@@ -132,6 +134,13 @@ fn parse_args() -> Result<Args, String> {
             "--client-type" => {
                 client_type = next("--client-type")?.parse().map_err(|_| "bad --client-type")?
             }
+            "--transport" => {
+                transport = match next("--transport")?.as_str() {
+                    "tcp" => Transport::Tcp,
+                    "ws" => Transport::Ws,
+                    o => return Err(format!("unknown transport {}", o)),
+                }
+            }
             "--help" | "-h" => {
                 println!("{}", help());
                 std::process::exit(0);
@@ -144,7 +153,7 @@ fn parse_args() -> Result<Args, String> {
         .ok_or_else(|| format!("missing server host\n\n{}", help()))?;
     Ok(Args {
         host, port, compression, quality, subsampling, frame_rate, custom_res,
-        win_size, fullscreen, kvm, hwaccel, no_reconnect, verbose, client_type,
+        win_size, fullscreen, kvm, hwaccel, no_reconnect, verbose, client_type, transport,
     })
 }
 
@@ -155,11 +164,11 @@ enum ActiveDecoder {
 
 struct AppState {
     decoder: Option<ActiveDecoder>,
-    latest_frame: Option<DecodedFrame>,
+    pending_tiles: Vec<DecodedFrame>,
+    screen: (u32, u32),
     cursor: Option<CursorImage>,
     cursor_pos: (i32, i32),
     cursor_visible: bool,
-    desktop_res: (u32, u32),
     events: Receiver<ServerEvent>,
     commands: mpsc::Sender<ClientCommand>,
     kvm: bool,
@@ -190,7 +199,13 @@ impl AppState {
                 self.cursor = Some(cursor_from_packet(&bmp));
             }
             ServerEvent::Frame(p) => {
-                self.desktop_res = (p.width.max(1), p.height.max(1));
+                // native TCP mode: header = full screen size, rect = tile bounds.
+                // WS viewer mode: header = tile size, rect = dest position.
+                let sw = p.width.max(p.rect.x2.max(0) as u32).max(1);
+                let sh = p.height.max(p.rect.y2.max(0) as u32).max(1);
+                if sw * sh > self.screen.0 * self.screen.1 {
+                    self.screen = (sw, sh);
+                }
                 let want = codec_for_compression(p.compression);
                 let need_new = match (&self.decoder, want) {
                     (None, _) => true,
@@ -202,19 +217,22 @@ impl AppState {
                 if need_new {
                     self.decoder = match want {
                         None => Some(ActiveDecoder::Raw(RawDecoder)),
-                        Some(codec) => match FfmpegDecoder::new(
-                            codec,
-                            self.hwaccel.clone(),
-                            p.width.max(1),
-                            p.height.max(1),
-                            if self.frame_rate == 1 { 60 } else { 30 },
-                        ) {
-                            Ok(d) => Some(ActiveDecoder::Ffmpeg(d)),
-                            Err(e) => {
-                                eprintln!("decoder init failed: {}", e);
-                                None
+                        Some(codec) => {
+                            let (tw, th) = p.tile_dims();
+                            match FfmpegDecoder::new(
+                                codec,
+                                self.hwaccel.clone(),
+                                tw,
+                                th,
+                                if self.frame_rate == 1 { 60 } else { 30 },
+                            ) {
+                                Ok(d) => Some(ActiveDecoder::Ffmpeg(d)),
+                                Err(e) => {
+                                    eprintln!("decoder init failed: {}", e);
+                                    None
+                                }
                             }
-                        },
+                        }
                     };
                 }
                 let frames = match &mut self.decoder {
@@ -222,8 +240,8 @@ impl AppState {
                     Some(ActiveDecoder::Ffmpeg(d)) => d.submit(&p).unwrap_or_default(),
                     None => Vec::new(),
                 };
-                if let Some(f) = frames.into_iter().last() {
-                    self.latest_frame = Some(f);
+                if !frames.is_empty() {
+                    self.pending_tiles.extend(frames);
                     window.request_redraw();
                 }
             }
@@ -258,9 +276,11 @@ fn main() {
     cfg.port = args.port;
     cfg.reconnect = !args.no_reconnect;
     cfg.verbose = args.verbose;
-    let ladder = standard_ladder(args.client_type, args.compression);
+    let ladder = standard_ladder(args.transport, args.client_type, args.compression);
     cfg.identification = ladder[0].clone();
+    cfg.identification.transport = args.transport;
     cfg.identification.compression = args.compression;
+    cfg.identification.fps = if args.frame_rate == 1 { 60 } else { 30 };
     cfg.identification.client_type = args.client_type;
     cfg.identification.quality = args.quality;
     cfg.identification.subsampling = args.subsampling;
@@ -324,8 +344,6 @@ fn main() {
         })
     };
     let mut renderer = unsafe { Renderer::new(gl) };
-    let size = window.inner_size();
-    unsafe { renderer.resize(size.width.max(1), size.height.max(1)) };
 
     if args.fullscreen {
         window.set_fullscreen(Some(Fullscreen::Borderless(None)));
@@ -337,11 +355,11 @@ fn main() {
 
     let mut state = AppState {
         decoder: None,
-        latest_frame: None,
+        pending_tiles: Vec::new(),
+        screen: (1, 1),
         cursor: None,
         cursor_pos: (0, 0),
         cursor_visible: false,
-        desktop_res: (1, 1),
         events: ev_rx,
         commands: cmd_tx,
         kvm: args.kvm,
@@ -363,15 +381,20 @@ fn main() {
                     let size = window.inner_size();
                     let viewport = (size.width.max(1), size.height.max(1));
                     unsafe {
-                        if let Some(frame) = &state.latest_frame {
+                        if !state.pending_tiles.is_empty() {
+                            for tile in state.pending_tiles.drain(..) {
+                                renderer.composite_tile(&tile, state.screen);
+                            }
+                        }
+                        if state.screen != (1, 1) {
                             let cursor = if state.cursor_visible {
                                 state.cursor.as_ref().map(|c| (c, state.cursor_pos.0, state.cursor_pos.1))
                             } else {
                                 None
                             };
-                            renderer.draw(frame, viewport, cursor);
+                            renderer.present(viewport, cursor);
                         } else {
-                            renderer.clear();
+                            renderer.clear_screen();
                         }
                         let _ = gl_surface.swap_buffers(&gl_context);
                     }
@@ -379,7 +402,6 @@ fn main() {
                 WindowEvent::Resized(size) => {
                     if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
                         gl_surface.resize(&gl_context, w, h);
-                        unsafe { renderer.resize(w.get(), h.get()) };
                     }
                     window.request_redraw();
                 }
@@ -387,8 +409,8 @@ fn main() {
                     if state.kvm {
                         let inner = window.inner_size();
                         if let Some(last) = state.last_mouse {
-                            let scale_x = state.desktop_res.0 as f64 / inner.width.max(1) as f64;
-                            let scale_y = state.desktop_res.1 as f64 / inner.height.max(1) as f64;
+                            let scale_x = state.screen.0 as f64 / inner.width.max(1) as f64;
+                            let scale_y = state.screen.1 as f64 / inner.height.max(1) as f64;
                             let dx = ((position.x - last.0) * scale_x) as i32;
                             let dy = ((position.y - last.1) * scale_y) as i32;
                             if dx != 0 || dy != 0 {
