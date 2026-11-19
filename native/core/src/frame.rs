@@ -15,7 +15,7 @@ impl PixelFormat {
         match self {
             PixelFormat::Nv12 => {
                 let y = (w as usize) * (h as usize);
-                let uv = 2 * (((w as usize) + 1) / 2) * (((h as usize) + 1) / 2);
+                let uv = 2 * (w as usize).div_ceil(2) * (h as usize).div_ceil(2);
                 y + uv
             }
             PixelFormat::Bgra | PixelFormat::Rgba => (w as usize) * (h as usize) * 4,
@@ -39,7 +39,7 @@ pub fn nv12_to_rgb24(frame: &DecodedFrame) -> Vec<u8> {
     let (w, h) = (frame.width as usize, frame.height as usize);
     let y_plane = &frame.data[..w * h];
     let uv_plane = &frame.data[w * h..];
-    let uv_stride = 2 * ((w + 1) / 2);
+    let uv_stride = 2 * w.div_ceil(2);
     let mut out = vec![0u8; w * h * 3];
     for y in 0..h {
         for x in 0..w {

@@ -1088,6 +1088,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "spacedesk-cli"
+version = "0.1.0"
+dependencies = [
+ "spacedesk-core",
+]
+
+[[package]]
 name = "spacedesk-core"
 version = "0.1.0"
 dependencies = [

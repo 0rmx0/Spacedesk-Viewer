@@ -25,7 +25,9 @@ use raw_window_handle::HasRawWindowHandle;
 use spacedesk_core::decoder::{Decoder, RawDecoder};
 use spacedesk_core::ffmpeg::{codec_for_compression, ffmpeg_available, FfmpegDecoder, HwAccel};
 use spacedesk_core::frame::DecodedFrame;
-use spacedesk_core::protocol::{ClientType, Compression, CursorBitmapPacket, MouseButton, Transport};
+use spacedesk_core::protocol::{
+    ClientType, Compression, CursorBitmapPacket, MouseButton, Transport,
+};
 use spacedesk_core::session::{run, standard_ladder, ClientCommand, ClientConfig, ServerEvent};
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,7 +35,9 @@ use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use ui::{Ui, COL_BG, COL_BORDER, COL_ERR, COL_OK, COL_PANEL, COL_TEXT, COL_TEXT_DIM};
-use winit::event::{ElementState, Event, KeyEvent, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{
+    ElementState, Event, KeyEvent, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent,
+};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowBuilder};
@@ -43,7 +47,12 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowBuilder};
 // ---------------------------------------------------------------------------
 
 const TRANSPORT_OPTS: [&str; 2] = ["tcp (native)", "ws (web viewer)"];
-const CLIENT_TYPE_OPTS: [&str; 4] = ["0 windows remote", "1 web browser", "2 usb-c apple", "3 kvm windows"];
+const CLIENT_TYPE_OPTS: [&str; 4] = [
+    "0 windows remote",
+    "1 web browser",
+    "2 usb-c apple",
+    "3 kvm windows",
+];
 const COMPRESSION_OPTS: [&str; 3] = ["h264", "jpeg", "off (raw)"];
 const SUBSAMPLING_OPTS: [&str; 3] = ["0 = 4:4:4", "1 = 4:2:2", "2 = 4:2:0"];
 const FPS_OPTS: [&str; 2] = ["30", "60"];
@@ -110,9 +119,15 @@ impl Default for Settings {
 
 impl Settings {
     fn config_path() -> std::path::PathBuf {
-        let base = std::env::var("XDG_CONFIG_HOME")
-            .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_else(|_| ".".into())));
-        std::path::PathBuf::from(base).join("spacedesk-viewer").join("settings.json")
+        let base = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            format!(
+                "{}/.config",
+                std::env::var("HOME").unwrap_or_else(|_| ".".into())
+            )
+        });
+        std::path::PathBuf::from(base)
+            .join("spacedesk-viewer")
+            .join("settings.json")
     }
 
     fn load() -> Settings {
@@ -176,9 +191,17 @@ impl Settings {
             return Err("server IP is empty".into());
         }
         let port: u16 = self.port.trim().parse().map_err(|_| "bad port")?;
-        let quality: u32 = self.quality.trim().parse().map_err(|_| "bad quality (1-100)")?;
+        let quality: u32 = self
+            .quality
+            .trim()
+            .parse()
+            .map_err(|_| "bad quality (1-100)")?;
         let (win_w, win_h) = self.window_size()?;
-        let transport = if self.transport == 1 { Transport::Ws } else { Transport::Tcp };
+        let transport = if self.transport == 1 {
+            Transport::Ws
+        } else {
+            Transport::Tcp
+        };
         let compression = [
             Compression::H264 as u32,
             Compression::Jpeg as u32,
@@ -191,11 +214,13 @@ impl Settings {
             ClientType::KvmWindows as u32,
         ][self.client_type.min(3)];
 
-        let mut cfg = ClientConfig::default();
-        cfg.host = host;
-        cfg.port = port;
-        cfg.reconnect = self.reconnect;
-        cfg.verbose = self.verbose;
+        let mut cfg = ClientConfig {
+            host,
+            port,
+            reconnect: self.reconnect,
+            verbose: self.verbose,
+            ..Default::default()
+        };
         let ladder = standard_ladder(transport, client_type, compression);
         cfg.identification = ladder[0].clone();
         cfg.identification.fps = if self.fps == 1 { 60 } else { 30 };
@@ -215,7 +240,8 @@ impl Settings {
                 p[1].trim().parse().map_err(|_| "bad resolution height")?,
             ));
         }
-        cfg.identification.client_name = format!("spacedesk-viewer {} (Linux)", env!("CARGO_PKG_VERSION"));
+        cfg.identification.client_name =
+            format!("spacedesk-viewer {} (Linux)", env!("CARGO_PKG_VERSION"));
         cfg.fallback_identifications = ladder[1..].to_vec();
         Ok(cfg)
     }
@@ -253,7 +279,9 @@ fn settings_from_args() -> Settings {
                 std::process::exit(0);
             }
             "--port" => {
-                if let Some(v) = next() { s.port = v; }
+                if let Some(v) = next() {
+                    s.port = v;
+                }
             }
             "--compression" => {
                 if let Some(v) = next() {
@@ -265,13 +293,19 @@ fn settings_from_args() -> Settings {
                 }
             }
             "--quality" => {
-                if let Some(v) = next() { s.quality = v; }
+                if let Some(v) = next() {
+                    s.quality = v;
+                }
             }
             "--subsampling" => {
-                if let Some(v) = next() { s.subsampling = v.parse().unwrap_or(2).min(2); }
+                if let Some(v) = next() {
+                    s.subsampling = v.parse().unwrap_or(2).min(2);
+                }
             }
             "--fps" => {
-                if let Some(v) = next() { s.fps = if v == "30" { 0 } else { 1 }; }
+                if let Some(v) = next() {
+                    s.fps = if v == "30" { 0 } else { 1 };
+                }
             }
             "--resolution" => {
                 if let Some(v) = next() {
@@ -306,10 +340,14 @@ fn settings_from_args() -> Settings {
             "--no-reconnect" => s.reconnect = false,
             "--verbose" | "-v" => s.verbose = true,
             "--transport" => {
-                if let Some(v) = next() { s.transport = if v == "ws" { 1 } else { 0 }; }
+                if let Some(v) = next() {
+                    s.transport = if v == "ws" { 1 } else { 0 };
+                }
             }
             "--client-type" => {
-                if let Some(v) = next() { s.client_type = v.parse().unwrap_or(0).min(3); }
+                if let Some(v) = next() {
+                    s.client_type = v.parse().unwrap_or(0).min(3);
+                }
             }
             h if host.is_none() && !h.starts_with('-') => host = Some(h.to_string()),
             _ => {}
@@ -414,7 +452,12 @@ impl AppState {
         let join = std::thread::spawn(move || {
             let _ = run(&cfg, ev_tx, cmd_rx);
         });
-        self.session = Some(SessionHandle { stop, cmd: cmd_tx, events: ev_rx, join });
+        self.session = Some(SessionHandle {
+            stop,
+            cmd: cmd_tx,
+            events: ev_rx,
+            join,
+        });
         self.mode = Mode::Video;
         self.pending_tiles.clear();
         self.screen = (1, 1);
@@ -424,7 +467,8 @@ impl AppState {
         // decode worker thread
         // bounded channel: if the decoder falls behind, stale packets are
         // dropped instead of accumulating into seconds of latency
-        let (pkt_tx, pkt_rx) = mpsc::sync_channel::<spacedesk_core::protocol::FrameBufferPacket>(64);
+        let (pkt_tx, pkt_rx) =
+            mpsc::sync_channel::<spacedesk_core::protocol::FrameBufferPacket>(64);
         let (frame_tx, frame_rx) = mpsc::channel::<Vec<DecodedFrame>>();
         let dstop = Arc::new(AtomicBool::new(false));
         let hwaccel = self.hwaccel.clone();
@@ -459,7 +503,10 @@ impl AppState {
                     (None, _) => true,
                     (Some(ActiveDecoder::Raw(_)), None) => false,
                     (Some(ActiveDecoder::Raw(_)), Some(_)) => true,
-                    (Some(ActiveDecoder::Jpeg(_)), Some(spacedesk_core::ffmpeg::CodecKind::Mjpeg)) => false,
+                    (
+                        Some(ActiveDecoder::Jpeg(_)),
+                        Some(spacedesk_core::ffmpeg::CodecKind::Mjpeg),
+                    ) => false,
                     (Some(ActiveDecoder::Jpeg(_)), _) => true,
                     (Some(ActiveDecoder::Ffmpeg(_)), None) => true,
                     (Some(ActiveDecoder::Ffmpeg(f)), Some(c)) => f.codec_kind() != c,
@@ -472,7 +519,13 @@ impl AppState {
                         }
                         Some(codec) => {
                             let (tw, th) = (p.width.max(1), p.height.max(1));
-                            match FfmpegDecoder::new(codec, hwaccel.clone(), tw, th, if frame_rate == 1 { 60 } else { 30 }) {
+                            match FfmpegDecoder::new(
+                                codec,
+                                hwaccel.clone(),
+                                tw,
+                                th,
+                                if frame_rate == 1 { 60 } else { 30 },
+                            ) {
                                 Ok(d) => Some(ActiveDecoder::Ffmpeg(d)),
                                 Err(e) => {
                                     log_err(&format!("decoder init failed: {}", e));
@@ -486,15 +539,16 @@ impl AppState {
                     Some(ActiveDecoder::Raw(d)) => d.submit(&p).unwrap_or_default(),
                     Some(ActiveDecoder::Jpeg(d)) => match d.submit(&p) {
                         Ok(f) => f,
-                        Err(e) => { log_err(&format!("jpeg decode: {}", e)); Vec::new() }
+                        Err(e) => {
+                            log_err(&format!("jpeg decode: {}", e));
+                            Vec::new()
+                        }
                     },
                     Some(ActiveDecoder::Ffmpeg(d)) => d.submit(&p).unwrap_or_default(),
                     None => Vec::new(),
                 };
-                if !frames.is_empty() {
-                    if frame_tx.send(frames).is_err() {
-                        break;
-                    }
+                if !frames.is_empty() && frame_tx.send(frames).is_err() {
+                    break;
                 }
             }
         });
@@ -502,7 +556,11 @@ impl AppState {
         self.frame_rx = Some(frame_rx);
         self.decode_stop = Some(dstop);
         self.decode_join = Some(djoin);
-        self.status = format!("connecting to {}:{} ...", self.settings.host.trim(), self.settings.port.trim());
+        self.status = format!(
+            "connecting to {}:{} ...",
+            self.settings.host.trim(),
+            self.settings.port.trim()
+        );
         self.status_ok = true;
         window.set_title("spacedesk viewer - connecting...");
         if self.kvm {
@@ -555,42 +613,44 @@ impl AppState {
         };
         for ev in events {
             {
-            match ev {
-                ServerEvent::Connected => {
-                    self.status = "connected".to_string();
-                    self.status_ok = true;
-                    window.set_title("spacedesk viewer - connected");
-                }
-                ServerEvent::Error(e) => {
-                    self.status = format!("error: {}", e);
-                    self.status_ok = false;
-                    log_err(&format!("error: {}", e));
-                }
-                ServerEvent::Disconnected { reason } => {
-                    log_err(&format!("disconnected: {}", reason));
-                    if matches!(self.mode, Mode::Video) {
-                        let r = format!("disconnected: {}", reason);
-                        // borrow workaround: stop session after the loop
-                        self.back_to_menu(window, &r);
-                    } else {
-                        self.status = format!("disconnected: {}", reason);
+                match ev {
+                    ServerEvent::Connected => {
+                        self.status = "connected".to_string();
+                        self.status_ok = true;
+                        window.set_title("spacedesk viewer - connected");
+                    }
+                    ServerEvent::Error(e) => {
+                        self.status = format!("error: {}", e);
                         self.status_ok = false;
+                        log_err(&format!("error: {}", e));
+                    }
+                    ServerEvent::Disconnected { reason } => {
+                        log_err(&format!("disconnected: {}", reason));
+                        if matches!(self.mode, Mode::Video) {
+                            let r = format!("disconnected: {}", reason);
+                            // borrow workaround: stop session after the loop
+                            self.back_to_menu(window, &r);
+                        } else {
+                            self.status = format!("disconnected: {}", reason);
+                            self.status_ok = false;
+                        }
+                    }
+                    ServerEvent::Visibility(_)
+                    | ServerEvent::PowerSuspendHibernate(_)
+                    | ServerEvent::Rotation(_) => {}
+                    ServerEvent::CursorPosition { x, y, visible } => {
+                        self.cursor_pos = (x, y);
+                        self.cursor_visible = visible;
+                    }
+                    ServerEvent::CursorBitmap(bmp) => {
+                        self.cursor = Some(cursor_from_packet(&bmp));
+                    }
+                    ServerEvent::Frame(p) => {
+                        if matches!(self.mode, Mode::Video) {
+                            self.handle_frame(p, window);
+                        }
                     }
                 }
-                ServerEvent::Visibility(_) | ServerEvent::PowerSuspendHibernate(_) | ServerEvent::Rotation(_) => {}
-                ServerEvent::CursorPosition { x, y, visible } => {
-                    self.cursor_pos = (x, y);
-                    self.cursor_visible = visible;
-                }
-                ServerEvent::CursorBitmap(bmp) => {
-                    self.cursor = Some(cursor_from_packet(&bmp));
-                }
-                ServerEvent::Frame(p) => {
-                    if matches!(self.mode, Mode::Video) {
-                        self.handle_frame(p, window);
-                    }
-                }
-            }
             }
         }
     }
@@ -618,7 +678,8 @@ impl AppState {
         while let Ok(frames) = rx.try_recv() {
             const MAX_PENDING: usize = 24;
             if self.pending_tiles.len() + frames.len() > MAX_PENDING {
-                let drop_n = (self.pending_tiles.len() + frames.len() - MAX_PENDING).min(self.pending_tiles.len());
+                let drop_n = (self.pending_tiles.len() + frames.len() - MAX_PENDING)
+                    .min(self.pending_tiles.len());
                 self.pending_tiles.drain(..drop_n);
             }
             self.pending_tiles.extend(frames);
@@ -675,26 +736,87 @@ fn draw_menu(state: &mut AppState, renderer: &Renderer, viewport: (u32, u32), wi
 
         // title
         renderer.draw_text(40.0, 78.0, 2.0, "spacedesk viewer", COL_TEXT);
-        renderer.draw_text(42.0, 104.0, 1.0, "native Linux client - protocol v4.8", COL_TEXT_DIM);
+        renderer.draw_text(
+            42.0,
+            104.0,
+            1.0,
+            "native Linux client - protocol v4.8",
+            COL_TEXT_DIM,
+        );
 
         // connection row
         let row_y = 140.0;
         renderer.draw_text(40.0, row_y + 19.0, 1.0, "Server IP:", COL_TEXT_DIM);
-        let enter_host = ui.text_field(renderer, ID_HOST, 130.0, row_y, 240.0, &mut s.host, false, "e.g. 192.168.1.10");
+        let enter_host = ui.text_field(
+            renderer,
+            ID_HOST,
+            130.0,
+            row_y,
+            240.0,
+            &mut s.host,
+            false,
+            "e.g. 192.168.1.10",
+        );
         renderer.draw_text(390.0, row_y + 19.0, 1.0, "Port:", COL_TEXT_DIM);
-        let enter_port = ui.text_field(renderer, ID_PORT, 435.0, row_y, 80.0, &mut s.port, true, "28252");
-        let connect = ui.button(renderer, ID_CONNECT, 535.0, row_y - 4.0, 130.0, 34.0, "Connect", true);
-        let settings_btn = ui.button(renderer, ID_SETTINGS, 680.0, row_y - 4.0, 120.0, 34.0, if state.show_settings { "Hide settings" } else { "Settings" }, false);
-        let quit = ui.button(renderer, ID_QUIT, 815.0, row_y - 4.0, 90.0, 34.0, "Quit", false);
+        let enter_port = ui.text_field(
+            renderer,
+            ID_PORT,
+            435.0,
+            row_y,
+            80.0,
+            &mut s.port,
+            true,
+            "28252",
+        );
+        let connect = ui.button(
+            renderer,
+            ID_CONNECT,
+            535.0,
+            row_y - 4.0,
+            130.0,
+            34.0,
+            "Connect",
+            true,
+        );
+        let settings_btn = ui.button(
+            renderer,
+            ID_SETTINGS,
+            680.0,
+            row_y - 4.0,
+            120.0,
+            34.0,
+            if state.show_settings {
+                "Hide settings"
+            } else {
+                "Settings"
+            },
+            false,
+        );
+        let quit = ui.button(
+            renderer,
+            ID_QUIT,
+            815.0,
+            row_y - 4.0,
+            90.0,
+            34.0,
+            "Quit",
+            false,
+        );
         if settings_btn {
             state.show_settings = !state.show_settings;
         }
 
         // status line
         let (scol, status) = if state.status.is_empty() {
-            (COL_TEXT_DIM, "enter the server address, then Connect".to_string())
+            (
+                COL_TEXT_DIM,
+                "enter the server address, then Connect".to_string(),
+            )
         } else {
-            (if state.status_ok { COL_OK } else { COL_ERR }, state.status.clone())
+            (
+                if state.status_ok { COL_OK } else { COL_ERR },
+                state.status.clone(),
+            )
         };
         renderer.draw_text(40.0, 205.0, 1.0, &status, scol);
 
@@ -725,19 +847,60 @@ fn draw_menu(state: &mut AppState, renderer: &Renderer, viewport: (u32, u32), wi
             // column 1
             let y = r0;
             renderer.draw_text(col1, y + 19.0, 1.0, "Transport", COL_TEXT_DIM);
-            ui.dropdown(renderer, ID_TRANSPORT, ctrl_x1, y, 200.0, &TRANSPORT_OPTS, &mut s.transport);
+            ui.dropdown(
+                renderer,
+                ID_TRANSPORT,
+                ctrl_x1,
+                y,
+                200.0,
+                &TRANSPORT_OPTS,
+                &mut s.transport,
+            );
             let y = r0 + step;
             renderer.draw_text(col1, y + 19.0, 1.0, "Client type", COL_TEXT_DIM);
-            ui.dropdown(renderer, ID_CLIENT_TYPE, ctrl_x1, y, 200.0, &CLIENT_TYPE_OPTS, &mut s.client_type);
+            ui.dropdown(
+                renderer,
+                ID_CLIENT_TYPE,
+                ctrl_x1,
+                y,
+                200.0,
+                &CLIENT_TYPE_OPTS,
+                &mut s.client_type,
+            );
             let y = r0 + step * 2.0;
             renderer.draw_text(col1, y + 19.0, 1.0, "Compression", COL_TEXT_DIM);
-            ui.dropdown(renderer, ID_COMPRESSION, ctrl_x1, y, 200.0, &COMPRESSION_OPTS, &mut s.compression);
+            ui.dropdown(
+                renderer,
+                ID_COMPRESSION,
+                ctrl_x1,
+                y,
+                200.0,
+                &COMPRESSION_OPTS,
+                &mut s.compression,
+            );
             let y = r0 + step * 3.0;
             renderer.draw_text(col1, y + 19.0, 1.0, "Quality (1-100)", COL_TEXT_DIM);
-            ui.text_field(renderer, ID_QUALITY, ctrl_x1, y, 100.0, &mut s.quality, true, "70");
+            ui.text_field(
+                renderer,
+                ID_QUALITY,
+                ctrl_x1,
+                y,
+                100.0,
+                &mut s.quality,
+                true,
+                "70",
+            );
             let y = r0 + step * 4.0;
             renderer.draw_text(col1, y + 19.0, 1.0, "Subsampling", COL_TEXT_DIM);
-            ui.dropdown(renderer, ID_SUBSAMPLING, ctrl_x1, y, 200.0, &SUBSAMPLING_OPTS, &mut s.subsampling);
+            ui.dropdown(
+                renderer,
+                ID_SUBSAMPLING,
+                ctrl_x1,
+                y,
+                200.0,
+                &SUBSAMPLING_OPTS,
+                &mut s.subsampling,
+            );
             let y = r0 + step * 5.0;
             renderer.draw_text(col1, y + 19.0, 1.0, "FPS", COL_TEXT_DIM);
             ui.dropdown(renderer, ID_FPS, ctrl_x1, y, 100.0, &FPS_OPTS, &mut s.fps);
@@ -745,26 +908,103 @@ fn draw_menu(state: &mut AppState, renderer: &Renderer, viewport: (u32, u32), wi
             // column 2
             let y = r0;
             renderer.draw_text(col2, y + 19.0, 1.0, "Resolution", COL_TEXT_DIM);
-            ui.dropdown(renderer, ID_RESOLUTION, ctrl_x2, y, 200.0, &RESOLUTION_OPTS, &mut s.res_mode);
+            ui.dropdown(
+                renderer,
+                ID_RESOLUTION,
+                ctrl_x2,
+                y,
+                200.0,
+                &RESOLUTION_OPTS,
+                &mut s.res_mode,
+            );
             if s.res_mode == RESOLUTION_OPTS.len() - 1 {
-                ui.text_field(renderer, ID_RES_CUSTOM, ctrl_x2 + 210.0, y, 110.0, &mut s.res_custom, false, "WxH");
+                ui.text_field(
+                    renderer,
+                    ID_RES_CUSTOM,
+                    ctrl_x2 + 210.0,
+                    y,
+                    110.0,
+                    &mut s.res_custom,
+                    false,
+                    "WxH",
+                );
             }
             let y = r0 + step;
             renderer.draw_text(col2, y + 19.0, 1.0, "Window size", COL_TEXT_DIM);
-            ui.text_field(renderer, ID_WIN_W, ctrl_x2, y, 80.0, &mut s.win_w, true, "1280");
+            ui.text_field(
+                renderer,
+                ID_WIN_W,
+                ctrl_x2,
+                y,
+                80.0,
+                &mut s.win_w,
+                true,
+                "1280",
+            );
             renderer.draw_text(ctrl_x2 + 86.0, y + 19.0, 1.0, "x", COL_TEXT_DIM);
-            ui.text_field(renderer, ID_WIN_H, ctrl_x2 + 100.0, y, 80.0, &mut s.win_h, true, "720");
+            ui.text_field(
+                renderer,
+                ID_WIN_H,
+                ctrl_x2 + 100.0,
+                y,
+                80.0,
+                &mut s.win_h,
+                true,
+                "720",
+            );
             let y = r0 + step * 2.0;
             renderer.draw_text(col2, y + 19.0, 1.0, "HW accel", COL_TEXT_DIM);
-            ui.dropdown(renderer, ID_HWACCEL, ctrl_x2, y, 200.0, &HWACCEL_OPTS, &mut s.hwaccel);
+            ui.dropdown(
+                renderer,
+                ID_HWACCEL,
+                ctrl_x2,
+                y,
+                200.0,
+                &HWACCEL_OPTS,
+                &mut s.hwaccel,
+            );
             let y = r0 + step * 3.0;
-            ui.checkbox(renderer, ID_FULLSCREEN, col2, y, "start fullscreen", &mut s.fullscreen);
-            ui.checkbox(renderer, ID_KVM, col2 + 220.0, y, "mouse/keyboard control (KVM)", &mut s.kvm);
+            ui.checkbox(
+                renderer,
+                ID_FULLSCREEN,
+                col2,
+                y,
+                "start fullscreen",
+                &mut s.fullscreen,
+            );
+            ui.checkbox(
+                renderer,
+                ID_KVM,
+                col2 + 220.0,
+                y,
+                "mouse/keyboard control (KVM)",
+                &mut s.kvm,
+            );
             let y = r0 + step * 4.0;
-            ui.checkbox(renderer, ID_RECONNECT, col2, y, "auto-reconnect", &mut s.reconnect);
-            ui.checkbox(renderer, ID_VERBOSE, col2 + 220.0, y, "verbose logs", &mut s.verbose);
+            ui.checkbox(
+                renderer,
+                ID_RECONNECT,
+                col2,
+                y,
+                "auto-reconnect",
+                &mut s.reconnect,
+            );
+            ui.checkbox(
+                renderer,
+                ID_VERBOSE,
+                col2 + 220.0,
+                y,
+                "verbose logs",
+                &mut s.verbose,
+            );
             let y = r0 + step * 5.0;
-            renderer.draw_text(col2, y + 19.0, 1.0, "Esc: back to menu - F11: fullscreen (in video)", COL_TEXT_DIM);
+            renderer.draw_text(
+                col2,
+                y + 19.0,
+                1.0,
+                "Esc: back to menu - F11: fullscreen (in video)",
+                COL_TEXT_DIM,
+            );
         }
 
         ui.draw_popups(renderer);
@@ -815,7 +1055,12 @@ fn main() {
     let window = window.expect("no window");
 
     let attrs = window.build_surface_attributes(Default::default());
-    let gl_surface = unsafe { gl_config.display().create_window_surface(&gl_config, &attrs) }.unwrap();
+    let gl_surface = unsafe {
+        gl_config
+            .display()
+            .create_window_surface(&gl_config, &attrs)
+    }
+    .unwrap();
     let gl_context = unsafe {
         gl_config
             .display()
@@ -831,13 +1076,16 @@ fn main() {
     };
     let gl_context = gl_context.make_current(&gl_surface).unwrap();
     gl_surface
-        .set_swap_interval(&gl_context, glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()))
+        .set_swap_interval(
+            &gl_context,
+            glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
+        )
         .unwrap();
     let gl = unsafe {
         glow::Context::from_loader_function(|s| {
             gl_config
                 .display()
-                .get_proc_address(&std::ffi::CString::new(s).unwrap()) as *const std::ffi::c_void
+                .get_proc_address(&std::ffi::CString::new(s).unwrap())
         })
     };
     let mut renderer = unsafe { Renderer::new(gl) };
@@ -897,7 +1145,13 @@ fn main() {
                                 let chars = std::mem::take(&mut state.chars);
                                 let backspace = std::mem::take(&mut state.backspace);
                                 let enter = std::mem::take(&mut state.enter);
-                                state.ui.begin(state.mouse_pos, state.mouse_down, chars, backspace, enter);
+                                state.ui.begin(
+                                    state.mouse_pos,
+                                    state.mouse_down,
+                                    chars,
+                                    backspace,
+                                    enter,
+                                );
                                 draw_menu(&mut state, &renderer, viewport, &window);
                                 if state.quit_requested {
                                     state.settings.save();
@@ -913,7 +1167,10 @@ fn main() {
                                 }
                                 if state.screen != (1, 1) {
                                     let cursor = if state.cursor_visible {
-                                        state.cursor.as_ref().map(|c| (c, state.cursor_pos.0, state.cursor_pos.1))
+                                        state
+                                            .cursor
+                                            .as_ref()
+                                            .map(|c| (c, state.cursor_pos.0, state.cursor_pos.1))
                                     } else {
                                         None
                                     };
@@ -927,7 +1184,9 @@ fn main() {
                     }
                 }
                 WindowEvent::Resized(size) => {
-                    if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
+                    if let (Some(w), Some(h)) =
+                        (NonZeroU32::new(size.width), NonZeroU32::new(size.height))
+                    {
                         gl_surface.resize(&gl_context, w, h);
                     }
                     window.request_redraw();
@@ -951,7 +1210,9 @@ fn main() {
                     }
                     window.request_redraw();
                 }
-                WindowEvent::MouseInput { state: st, button, .. } => {
+                WindowEvent::MouseInput {
+                    state: st, button, ..
+                } => {
                     let down = st == ElementState::Pressed;
                     state.mouse_down = down;
                     if state.kvm && matches!(state.mode, Mode::Video) {
@@ -987,7 +1248,13 @@ fn main() {
                     }
                 }
                 WindowEvent::KeyboardInput {
-                    event: KeyEvent { state: st, physical_key: PhysicalKey::Code(code), text, .. },
+                    event:
+                        KeyEvent {
+                            state: st,
+                            physical_key: PhysicalKey::Code(code),
+                            text,
+                            ..
+                        },
                     ..
                 } => {
                     match state.mode {
@@ -1028,7 +1295,11 @@ fn main() {
                             if let Some((vk, ext)) = vkmap::to_vk(code) {
                                 let down = st == ElementState::Pressed;
                                 if let Some(s) = &state.session {
-                                    let _ = s.cmd.send(ClientCommand::Key { vk, down, extended: ext });
+                                    let _ = s.cmd.send(ClientCommand::Key {
+                                        vk,
+                                        down,
+                                        extended: ext,
+                                    });
                                 }
                             }
                         }

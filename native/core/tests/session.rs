@@ -2,8 +2,8 @@
 //! identification handshake, streams visibility / fragmented raw frames / JPEG
 //! frames / cursor packets, and validates the client's ACKs and KVM packets.
 
-use spacedesk_core::protocol::{self, *};
 use spacedesk_core::protocol::Transport;
+use spacedesk_core::protocol::*;
 use spacedesk_core::session::{run, ClientCommand, ClientConfig, ServerEvent};
 use spacedesk_core::ws::WsMessage;
 use std::io::{Read, Write};
@@ -104,7 +104,14 @@ fn server_packet(ty: HeaderType, payload_len: u32) -> Vec<u8> {
     p
 }
 
-fn frame_packet(width: u32, height: u32, format: u32, compression: u32, fragment: u32, payload: &[u8]) -> Vec<u8> {
+fn frame_packet(
+    width: u32,
+    height: u32,
+    format: u32,
+    compression: u32,
+    fragment: u32,
+    payload: &[u8],
+) -> Vec<u8> {
     let mut p = server_packet(HeaderType::FrameBuffer, payload.len() as u32);
     put_u32(&mut p, 8, width);
     put_u32(&mut p, 12, height);
@@ -133,7 +140,9 @@ fn session_handshake_frames_acks_and_kvm() {
 
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
         server_handshake(&mut stream);
         let mut buf = Vec::new();
 
@@ -203,19 +212,18 @@ fn session_handshake_frames_acks_and_kvm() {
         assert_eq!(op, 0x2);
         assert_eq!(get_u32(&payload, 0), HeaderType::Keyboard as u32);
         assert_eq!(get_u32(&payload, 8), 0x41);
-        assert_eq!(
-            get_u32(&payload, 16),
-            key_events::SCAN_CODE
-        );
+        assert_eq!(get_u32(&payload, 16), key_events::SCAN_CODE);
 
         // 7) server disconnects
         server_send_frame(&mut stream, 0x8, &1000u16.to_be_bytes());
     });
 
-    let mut cfg = ClientConfig::default();
-    cfg.host = "127.0.0.1".to_string();
-    cfg.port = port;
-    cfg.reconnect = false;
+    let mut cfg = ClientConfig {
+        host: "127.0.0.1".to_string(),
+        port,
+        reconnect: false,
+        ..Default::default()
+    };
     cfg.identification.transport = Transport::Ws;
     cfg.identification.compression = Compression::H264 as u32;
 
@@ -225,10 +233,7 @@ fn session_handshake_frames_acks_and_kvm() {
     let session_thread = std::thread::spawn(move || run(&cfg, ev_tx, cmd_rx));
 
     // client side assertions
-    assert!(matches!(
-        recv_event(&ev_rx, 5000),
-        ServerEvent::Connected
-    ));
+    assert!(matches!(recv_event(&ev_rx, 5000), ServerEvent::Connected));
     assert!(matches!(
         recv_event(&ev_rx, 5000),
         ServerEvent::Visibility(true)
@@ -302,7 +307,12 @@ fn raw_decoder_passthrough() {
         height: 4,
         pitch: 16,
         format: 4,
-        rect: Rect { x: 0, y: 0, x2: 4, y2: 4 },
+        rect: Rect {
+            x: 0,
+            y: 0,
+            x2: 4,
+            y2: 4,
+        },
         compression: 0,
         fragment_info: 0,
         payload: payload.clone(),
@@ -311,10 +321,17 @@ fn raw_decoder_passthrough() {
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0].format, PixelFormat::Bgra);
     assert_eq!(frames[0].data, payload);
-    assert_eq!(frames[0].rect, Rect { x: 0, y: 0, x2: 4, y2: 4 });
+    assert_eq!(
+        frames[0].rect,
+        Rect {
+            x: 0,
+            y: 0,
+            x2: 4,
+            y2: 4
+        }
+    );
     let _ = WsMessage::Binary(vec![]); // silence unused import in some cfgs
 }
-
 
 // ---------------------------------------------------------------------------
 // Raw TCP (native) transport test: no HTTP/WS handshake, packets are raw.
@@ -345,7 +362,9 @@ fn session_raw_tcp_native_handshake_ping_echo_ack() {
 
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
         let mut buf = Vec::new();
 
         // 1) raw identification packet, no HTTP handshake
@@ -388,10 +407,12 @@ fn session_raw_tcp_native_handshake_ping_echo_ack() {
         assert_eq!(get_u32(&mv, 20), mouse_events::MOVE);
     });
 
-    let mut cfg = ClientConfig::default();
-    cfg.host = "127.0.0.1".to_string();
-    cfg.port = port;
-    cfg.reconnect = false;
+    let mut cfg = ClientConfig {
+        host: "127.0.0.1".to_string(),
+        port,
+        reconnect: false,
+        ..Default::default()
+    };
     cfg.identification.transport = Transport::Tcp;
     cfg.identification.client_type = 0;
     cfg.identification.compression = Compression::H264 as u32;
@@ -408,7 +429,9 @@ fn session_raw_tcp_native_handshake_ping_echo_ack() {
         }
         other => panic!("expected frame, got {:?}", other),
     }
-    cmd_tx.send(ClientCommand::MouseMove { dx: 5, dy: 6 }).unwrap();
+    cmd_tx
+        .send(ClientCommand::MouseMove { dx: 5, dy: 6 })
+        .unwrap();
     // wait for server thread to finish reading our packets
     server.join().unwrap();
     let _ = session_thread.join();

@@ -16,7 +16,10 @@ use crate::transport::Conn;
 use crate::ws::{WsError, WsErrorKind};
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc::{Receiver, Sender}};
+use std::sync::{
+    mpsc::{Receiver, Sender},
+    Arc,
+};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -64,10 +67,26 @@ pub fn standard_ladder(
     primary_compression: u32,
 ) -> Vec<Identification> {
     let combos: [(Transport, u32, u32); 4] = [
-        (Transport::Tcp, ClientType::WindowsRemoteMonitor as u32, Compression::H264 as u32),
-        (Transport::Tcp, ClientType::WindowsRemoteMonitor as u32, Compression::Jpeg as u32),
-        (Transport::Ws, ClientType::WebBrowser as u32, Compression::Jpeg as u32),
-        (Transport::Ws, ClientType::WebBrowser as u32, Compression::Off as u32),
+        (
+            Transport::Tcp,
+            ClientType::WindowsRemoteMonitor as u32,
+            Compression::H264 as u32,
+        ),
+        (
+            Transport::Tcp,
+            ClientType::WindowsRemoteMonitor as u32,
+            Compression::Jpeg as u32,
+        ),
+        (
+            Transport::Ws,
+            ClientType::WebBrowser as u32,
+            Compression::Jpeg as u32,
+        ),
+        (
+            Transport::Ws,
+            ClientType::WebBrowser as u32,
+            Compression::Off as u32,
+        ),
     ];
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -75,11 +94,12 @@ pub fn standard_ladder(
         .chain(combos.iter().copied())
         .filter(|c| seen.insert((c.0, c.1, c.2)));
     for (tr, ct, comp) in ordered {
-        let mut ident = Identification::default();
-        ident.transport = tr;
-        ident.client_type = ct;
-        ident.compression = comp;
-        out.push(ident);
+        out.push(Identification {
+            transport: tr,
+            client_type: ct,
+            compression: comp,
+            ..Default::default()
+        });
     }
     out
 }
@@ -90,22 +110,49 @@ pub enum ServerEvent {
     /// A complete frame payload (fragments reassembled) ready to be decoded.
     Frame(FrameBufferPacket),
     Visibility(bool),
-    CursorPosition { x: i32, y: i32, visible: bool },
+    CursorPosition {
+        x: i32,
+        y: i32,
+        visible: bool,
+    },
     CursorBitmap(CursorBitmapPacket),
     PowerSuspendHibernate(u32),
     Rotation(u32),
-    Disconnected { reason: String },
+    Disconnected {
+        reason: String,
+    },
     Error(String),
 }
 
 #[derive(Debug, Clone)]
 pub enum ClientCommand {
-    MouseMove { dx: i32, dy: i32 },
-    MouseAbsolute { x: u32, y: u32 },
-    MouseButton { button: MouseButton, down: bool },
-    MouseWheel { delta: i32 },
-    Key { vk: u32, down: bool, extended: bool },
-    Touch { down: bool, x: u32, y: u32, res_x: u32, res_y: u32 },
+    MouseMove {
+        dx: i32,
+        dy: i32,
+    },
+    MouseAbsolute {
+        x: u32,
+        y: u32,
+    },
+    MouseButton {
+        button: MouseButton,
+        down: bool,
+    },
+    MouseWheel {
+        delta: i32,
+    },
+    Key {
+        vk: u32,
+        down: bool,
+        extended: bool,
+    },
+    Touch {
+        down: bool,
+        x: u32,
+        y: u32,
+        res_x: u32,
+        res_y: u32,
+    },
     Disconnect,
 }
 
@@ -139,17 +186,23 @@ pub fn run(
     // identification ladder: primary first, then fallbacks
     let mut ladder = vec![cfg.identification.clone()];
     for f in &cfg.fallback_identifications {
-        if !ladder
-            .iter()
-            .any(|i| i.transport == f.transport && i.client_type == f.client_type && i.compression == f.compression)
-        {
+        if !ladder.iter().any(|i| {
+            i.transport == f.transport
+                && i.client_type == f.client_type
+                && i.compression == f.compression
+        }) {
             ladder.push(f.clone());
         }
     }
     let mut ladder_idx = 0usize;
     let mut attempts = 0u32;
     loop {
-        if cfg.stop.as_ref().map(|s| s.load(Ordering::SeqCst)).unwrap_or(false) {
+        if cfg
+            .stop
+            .as_ref()
+            .map(|s| s.load(Ordering::SeqCst))
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         let mut cfg_i = cfg.clone();
@@ -169,16 +222,28 @@ pub fn run(
         );
         match connect_once(&cfg_i, &events, &cmds) {
             Ok(outcome) => {
-                if cfg.stop.as_ref().map(|s| s.load(Ordering::SeqCst)).unwrap_or(false) {
+                if cfg
+                    .stop
+                    .as_ref()
+                    .map(|s| s.load(Ordering::SeqCst))
+                    .unwrap_or(false)
+                {
                     return Ok(());
                 }
                 let more = ladder_idx + 1 < ladder.len();
                 let rejected = outcome.frames == 0 && outcome.elapsed < Duration::from_secs(3);
                 let reason = match &outcome.close {
-                    Some((code, r)) => format!("{} (close code {} reason {:?})", outcome.reason, code, r),
+                    Some((code, r)) => {
+                        format!("{} (close code {} reason {:?})", outcome.reason, code, r)
+                    }
                     None => outcome.reason.clone(),
                 };
-                send_event(&events, ServerEvent::Disconnected { reason: reason.clone() });
+                send_event(
+                    &events,
+                    ServerEvent::Disconnected {
+                        reason: reason.clone(),
+                    },
+                );
                 if rejected && more {
                     let prev = ladder[ladder_idx].clone();
                     ladder_idx += 1;
@@ -200,10 +265,7 @@ pub fn run(
             }
             Err(e) => {
                 let retry = cfg.reconnect && attempts < cfg.max_reconnects;
-                send_event(
-                    &events,
-                    ServerEvent::Error(format!("{} (reconnecting)", e)),
-                );
+                send_event(&events, ServerEvent::Error(format!("{} (reconnecting)", e)));
                 if !retry {
                     return Err(e);
                 }
@@ -221,13 +283,10 @@ fn connect_once(
 ) -> Result<ConnectOutcome, WsError> {
     let start = Instant::now();
     let addr_str = format!("{}:{}", cfg.host, cfg.port);
-    let addr = addr_str
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| WsError {
-            kind: WsErrorKind::Io,
-            detail: format!("cannot resolve {}", addr_str),
-        })?;
+    let addr = addr_str.to_socket_addrs()?.next().ok_or_else(|| WsError {
+        kind: WsErrorKind::Io,
+        detail: format!("cannot resolve {}", addr_str),
+    })?;
     let host_header = if cfg.port == 80 {
         cfg.host.clone()
     } else {
@@ -281,9 +340,13 @@ fn connect_once(
                 ClientCommand::Key { vk, down, extended } => {
                     protocol::keyboard_packet(vk, down, extended)
                 }
-                ClientCommand::Touch { down, x, y, res_x, res_y } => {
-                    protocol::touch_packet(down, x, y, res_x, res_y)
-                }
+                ClientCommand::Touch {
+                    down,
+                    x,
+                    y,
+                    res_x,
+                    res_y,
+                } => protocol::touch_packet(down, x, y, res_x, res_y),
                 ClientCommand::Disconnect => {
                     let _ = conn.send_packet(&protocol::disconnect_packet());
                     let _ = conn.close(1000);
@@ -347,7 +410,7 @@ fn connect_once(
                                 // packet is unfragmented or every 4th fragment
                                 // (H264 is a byte stream, so batching is harmless).
                                 pending.extend_from_slice(&p.payload);
-                                if !frag || frag_count % 4 == 0 {
+                                if !frag || frag_count.is_multiple_of(4) {
                                     let payload = std::mem::take(&mut pending);
                                     let mut p = p;
                                     p.payload = payload;
@@ -356,7 +419,7 @@ fn connect_once(
                                     }
                                 }
                             }
-                            if !frag || frag_count % 4 == 0 {
+                            if !frag || frag_count.is_multiple_of(4) {
                                 conn.send_packet(&protocol::flow_control_ack())?;
                             }
                         }

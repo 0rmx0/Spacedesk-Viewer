@@ -59,7 +59,11 @@ impl Decoder for RawDecoder {
 
 /// Helper: is this payload a self-contained JPEG (starts with SOI, ends with EOI)?
 pub fn is_complete_jpeg(data: &[u8]) -> bool {
-    data.len() >= 4 && data[0] == 0xFF && data[1] == 0xD8 && data[data.len() - 2] == 0xFF && data[data.len() - 1] == 0xD9
+    data.len() >= 4
+        && data[0] == 0xFF
+        && data[1] == 0xD8
+        && data[data.len() - 2] == 0xFF
+        && data[data.len() - 1] == 0xD9
 }
 
 pub fn compression_kind(compression: u32) -> Option<Compression> {

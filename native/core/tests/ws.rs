@@ -112,7 +112,7 @@ fn ws_handshake_fragmented_message_and_ping() {
         server_send_frame_fin(&mut stream, false, 0x2, b"hello "); // FIN=0 binary
         server_send_frame(&mut stream, 0x9, b"pingdata"); // ping
         server_send_frame_fin(&mut stream, true, 0x0, b"world"); // FIN=1 continuation
-        // expect a pong back
+                                                                 // expect a pong back
         let (op, payload) = server_read_frame(&mut stream, &mut buf);
         assert_eq!(op, 0xA);
         assert_eq!(payload, b"pingdata");
@@ -130,7 +130,9 @@ fn ws_handshake_fragmented_message_and_ping() {
         Duration::from_secs(5),
     )
     .unwrap();
-    client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
     match client.read_message().unwrap() {
         Some(WsMessage::Binary(data)) => assert_eq!(data, b"hello world"),
         other => panic!("unexpected {:?}", other),

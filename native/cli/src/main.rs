@@ -11,8 +11,8 @@ use spacedesk_core::decoder::{Decoder, RawDecoder};
 use spacedesk_core::ffmpeg::codec_for_compression;
 use spacedesk_core::ffmpeg::{ffmpeg_available, FfmpegDecoder, HwAccel};
 use spacedesk_core::frame::{write_ppm, DecodedFrame};
-use spacedesk_core::protocol::{ClientType, Compression};
 use spacedesk_core::protocol::Transport;
+use spacedesk_core::protocol::{ClientType, Compression};
 use spacedesk_core::session::{run, standard_ladder, ClientConfig, ServerEvent};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -57,7 +57,8 @@ fn parse_args() -> Result<Args, String> {
 
     while let Some(a) = args.next() {
         let mut next = |name: &str| -> Result<String, String> {
-            args.next().ok_or_else(|| format!("missing value for {}", name))
+            args.next()
+                .ok_or_else(|| format!("missing value for {}", name))
         };
         match a.as_str() {
             h if host.is_none() && !h.starts_with('-') => host = Some(h.to_string()),
@@ -110,7 +111,9 @@ fn parse_args() -> Result<Args, String> {
             "--no-reconnect" => no_reconnect = true,
             "--verbose" | "-v" => verbose = true,
             "--client-type" => {
-                client_type = next("--client-type")?.parse().map_err(|_| "bad --client-type")?
+                client_type = next("--client-type")?
+                    .parse()
+                    .map_err(|_| "bad --client-type")?
             }
             "--transport" => {
                 transport = match next("--transport")?.as_str() {
@@ -185,10 +188,12 @@ fn main() {
         std::fs::create_dir_all(dir).expect("cannot create dump dir");
     }
 
-    let mut cfg = ClientConfig::default();
-    cfg.host = args.host.clone();
-    cfg.port = args.port;
-    cfg.reconnect = !args.no_reconnect;
+    let mut cfg = ClientConfig {
+        host: args.host.clone(),
+        port: args.port,
+        reconnect: !args.no_reconnect,
+        ..Default::default()
+    };
     cfg.verbose = args.verbose;
     let ladder = standard_ladder(args.transport, args.client_type, args.compression);
     cfg.identification = ladder[0].clone();
@@ -206,7 +211,13 @@ fn main() {
 
     eprintln!(
         "connecting to {}:{} client_type={} compression={} quality={} fps_mode={} custom_res={:?}",
-        cfg.host, cfg.port, args.client_type, args.compression, args.quality, args.frame_rate, args.custom_res
+        cfg.host,
+        cfg.port,
+        args.client_type,
+        args.compression,
+        args.quality,
+        args.frame_rate,
+        args.custom_res
     );
     if args.compression != Compression::Off as u32 && !ffmpeg_available() {
         eprintln!("warning: ffmpeg not found — install it (`sudo apt install ffmpeg`) for H264/JPEG decoding");
@@ -265,7 +276,10 @@ fn main() {
                     (None, _) => true,
                     (Some(ActiveDecoder::Raw(_)), None) => false,
                     (Some(ActiveDecoder::Raw(_)), Some(_)) => true,
-                    (Some(ActiveDecoder::Jpeg(_)), Some(spacedesk_core::ffmpeg::CodecKind::Mjpeg)) => false,
+                    (
+                        Some(ActiveDecoder::Jpeg(_)),
+                        Some(spacedesk_core::ffmpeg::CodecKind::Mjpeg),
+                    ) => false,
                     (Some(ActiveDecoder::Jpeg(_)), _) => true,
                     (Some(ActiveDecoder::Ffmpeg(_)), None) => true,
                     (Some(ActiveDecoder::Ffmpeg(_)), Some(c)) => {

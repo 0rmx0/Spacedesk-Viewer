@@ -147,8 +147,8 @@ fn parse_frame_buffer_header() {
     put_u32(&mut buf, 36, 1100);
     put_u32(&mut buf, 40, 1); // H264
     put_u32(&mut buf, 64, 1); // fragment
-    for i in HEADER_LEN..buf.len() {
-        buf[i] = (i - HEADER_LEN) as u8;
+    for (i, b) in buf[HEADER_LEN..].iter_mut().enumerate() {
+        *b = i as u8;
     }
     let (packets, rest) = parse_packets(&buf);
     assert!(rest.is_empty());
@@ -242,7 +242,7 @@ fn identification_packet_native_tcp_layout() {
     assert_eq!(u32at(&pkt, 88), 1080);
     let payload = &pkt[HEADER_LEN..];
     assert_eq!(u32at(payload, 0), 1); // native payload magic
-    // GUID as UTF-16LE starting at offset 4: '{' = 0x7B
+                                      // GUID as UTF-16LE starting at offset 4: '{' = 0x7B
     assert_eq!(get_u16(payload, 4), 0x7B);
     // name at 78
     assert_eq!(get_u16(payload, 78), 'T' as u16);

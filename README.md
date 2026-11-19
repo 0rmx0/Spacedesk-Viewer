@@ -4,8 +4,11 @@ My own settings for the spacedesk client that can be used offline
 
 > ## 🐧 Native Linux client (Ubuntu 24.04)
 > A **native, high-performance client** written in Rust now lives in [`native/`](native/README.md):
-> WebSocket protocol client + **VA-API hardware H264 decoding** (FFmpeg) + **OpenGL rendering**,
-> with a headless CLI (`spacedesk-cli`) and a GUI (`spacedesk-viewer`).
+> raw-TCP/WebSocket protocol client + **VA-API hardware H264 decoding** (FFmpeg) + **OpenGL rendering**,
+> with a headless CLI (`spacedesk-cli`) and a GUI (`spacedesk-viewer`) that has a home menu
+> (server IP, Connect) and a settings panel persisted to
+> `~/.config/spacedesk-viewer/settings.json`.
+> Build from `native/` (Cargo workspace): `cargo build --release` → `native/target/release/spacedesk-viewer`.
 > See [native/README.md](native/README.md) for build & usage.
 
 > Resources from [Liumeo](https://github.com/eagleoflqj "Liumeo's github page"),  Big thanks to him !

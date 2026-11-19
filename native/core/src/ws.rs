@@ -53,7 +53,7 @@ impl From<io::Error> for WsError {
 
 fn b64_encode(data: &[u8]) -> String {
     const TBL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = *chunk.get(1).unwrap_or(&0) as u32;
@@ -61,8 +61,16 @@ fn b64_encode(data: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(TBL[(n >> 18) as usize & 63] as char);
         out.push(TBL[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { TBL[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { TBL[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            TBL[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TBL[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -133,7 +141,9 @@ impl WsClient {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Some(pos) = find_subsequence(&self.read_buf[self.read_pos..], b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&self.read_buf[self.read_pos..self.read_pos + pos]).to_string();
+                let headers =
+                    String::from_utf8_lossy(&self.read_buf[self.read_pos..self.read_pos + pos])
+                        .to_string();
                 self.read_pos += pos + 4;
                 let status = headers.lines().next().unwrap_or("");
                 if !status.contains(" 101") {
@@ -177,7 +187,7 @@ impl WsClient {
                     return Err(WsError {
                         kind: WsErrorKind::Closed,
                         detail: "peer closed connection (EOF)".to_string(),
-                    })
+                    });
                 }
                 Ok(n) => self.read_buf.extend_from_slice(&tmp[..n]),
                 Err(e)
@@ -288,7 +298,8 @@ impl WsClient {
                     } else {
                         1005
                     };
-                    let reason = String::from_utf8_lossy(&payload[2.min(payload.len())..]).to_string();
+                    let reason =
+                        String::from_utf8_lossy(&payload[2.min(payload.len())..]).to_string();
                     self.last_close = Some((code, reason));
                     let _ = self.send_frame(OP_CLOSE, &payload);
                     return Ok(None);

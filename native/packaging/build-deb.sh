@@ -12,8 +12,8 @@ STAGE="$ROOT/$PKG"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/DEBIAN" "$STAGE/usr/bin" "$STAGE/usr/share/applications" "$STAGE/usr/share/icons/hicolor/256x256/apps"
 
-cp "$NATIVE/gui/target/release/spacedesk-viewer" "$STAGE/usr/bin/"
-cp "$NATIVE/cli/target/release/spacedesk-cli" "$STAGE/usr/bin/"
+cp "$NATIVE/target/release/spacedesk-viewer" "$STAGE/usr/bin/"
+cp "$NATIVE/target/release/spacedesk-cli" "$STAGE/usr/bin/"
 cp "$ROOT/spacedesk-viewer.desktop" "$STAGE/usr/share/applications/"
 cp "$NATIVE/../icons/spacedesk.png" "$STAGE/usr/share/icons/hicolor/256x256/apps/spacedesk.png"
 

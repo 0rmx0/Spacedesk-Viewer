@@ -58,11 +58,11 @@ pub fn build_atlas() -> Option<FontAtlas> {
     let scale = PxScale::from(PIXEL_SIZE);
     let scaled = font.as_scaled(scale);
     let atlas_w = ATLAS_COLS * CELL_W;
-    let atlas_h = ((GLYPH_COUNT as u32 + ATLAS_COLS - 1) / ATLAS_COLS) * CELL_H;
+    let atlas_h = (GLYPH_COUNT as u32).div_ceil(ATLAS_COLS) * CELL_H;
     let mut data = vec![0u8; (atlas_w * atlas_h * 4) as usize];
     let mut glyphs = [Glyph::default(); GLYPH_COUNT];
     let ascent = scaled.ascent();
-    for i in 0..GLYPH_COUNT {
+    for (i, slot) in glyphs.iter_mut().enumerate() {
         let c = char::from_u32(FIRST_CHAR + i as u32)?;
         let gid: GlyphId = font.glyph_id(c);
         let cell_x = (i as u32 % ATLAS_COLS) * CELL_W;
@@ -92,7 +92,7 @@ pub fn build_atlas() -> Option<FontAtlas> {
                         data[o + 3] = a;
                     }
                 });
-                glyphs[i] = Glyph {
+                *slot = Glyph {
                     u0: ox / atlas_w as f32,
                     v0: oy / atlas_h as f32,
                     u1: (ox + w) / atlas_w as f32,
@@ -104,10 +104,16 @@ pub fn build_atlas() -> Option<FontAtlas> {
                     advance,
                 };
             } else {
-                glyphs[i] = Glyph { advance, ..Default::default() };
+                *slot = Glyph {
+                    advance,
+                    ..Default::default()
+                };
             }
         } else {
-            glyphs[i] = Glyph { advance, ..Default::default() };
+            *slot = Glyph {
+                advance,
+                ..Default::default()
+            };
         }
     }
     Some(FontAtlas {

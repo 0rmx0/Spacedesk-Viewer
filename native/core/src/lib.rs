@@ -2,11 +2,11 @@
 //! high-performance spacedesk viewer on Linux (developed for Ubuntu 24.04).
 //!
 //! Layers:
-//! - [`protocol`]: the spacedesk binary protocol (v4.8) extracted from the official
+//! - [`protocol`] — the spacedesk binary protocol (v4.8) extracted from the official
 //!   HTML5 viewer bundled in this repository.
-//! - [`ws`]: minimal RFC 6455 WebSocket client (std only).
-//! - [`session`]: connection/handshake/fragment-reassembly/flow-control/KVM.
-//! - [`decoder`] / [`ffmpeg`]: raw and FFmpeg (VA-API hw accel) decoders.
+//! - [`ws`] — minimal RFC 6455 WebSocket client (std only).
+//! - [`session`] — connection/handshake/fragment-reassembly/flow-control/KVM.
+//! - decoders — [`decoder`] (raw) and [`ffmpeg`] (VA-API hw accel).
 
 pub mod decoder;
 pub mod ffmpeg;

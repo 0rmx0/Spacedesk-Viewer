@@ -265,25 +265,21 @@ pub fn parse_packets(buf: &[u8]) -> (Vec<Packet>, &[u8]) {
                 fragment_info: get_u32(header, 64),
                 payload: payload.to_vec(),
             }),
-            Some(HeaderType::Visibility) => {
-                Packet::Visibility(get_u32(header, 8) == 1)
-            }
+            Some(HeaderType::Visibility) => Packet::Visibility(get_u32(header, 8) == 1),
             Some(HeaderType::CursorPosition) => Packet::CursorPosition {
                 x: get_i32(header, 8),
                 y: get_i32(header, 12),
                 visible: get_u32(header, 16) == 1,
             },
-            Some(HeaderType::CursorBitmap) => {
-                Packet::CursorBitmap(CursorBitmapPacket {
-                    width: get_u32(header, 8),
-                    height: get_u32(header, 12),
-                    pitch: get_u32(header, 16),
-                    x_hot: get_i32(header, 20),
-                    y_hot: get_i32(header, 24),
-                    flags: get_u32(header, 28),
-                    payload: payload.to_vec(),
-                })
-            }
+            Some(HeaderType::CursorBitmap) => Packet::CursorBitmap(CursorBitmapPacket {
+                width: get_u32(header, 8),
+                height: get_u32(header, 12),
+                pitch: get_u32(header, 16),
+                x_hot: get_i32(header, 20),
+                y_hot: get_i32(header, 24),
+                flags: get_u32(header, 28),
+                payload: payload.to_vec(),
+            }),
             Some(HeaderType::PowerSuspendHibernate) => {
                 Packet::PowerSuspendHibernate(get_u32(header, 8))
             }
@@ -404,7 +400,7 @@ pub fn identification_packet(ident: &Identification) -> Vec<u8> {
                 pseudo_rand_u32() & 0xFFFF,
                 (pseudo_rand_u32() & 0x0FFF) | 0x4000,
                 (pseudo_rand_u32() & 0x3FFF) | 0x8000,
-                pseudo_rand_u32() & 0xFFFF_FFFF
+                pseudo_rand_u32()
             );
             let guid16: Vec<u16> = guid.encode_utf16().collect();
             for (i, ch) in guid16.iter().take(36).enumerate() {

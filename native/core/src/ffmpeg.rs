@@ -142,11 +142,8 @@ impl FfmpegDecoder {
         let (tx, rx) = mpsc::channel();
         let (expect_tx, expect_rx) = mpsc::channel::<(u32, u32, Rect)>();
         let reader = std::thread::spawn(move || {
-            loop {
-                let (w, h, rect) = match expect_rx.recv() {
-                    Ok(v) => v,
-                    Err(_) => break, // decoder shut down
-                };
+            // recv() errors when the decoder is shut down
+            while let Ok((w, h, rect)) = expect_rx.recv() {
                 let size = PixelFormat::Bgra.bytes_per_frame(w, h);
                 let mut buf = vec![0u8; size];
                 match stdout.read_exact(&mut buf) {
@@ -187,7 +184,13 @@ impl FfmpegDecoder {
         })
     }
 
-    fn respawn(&mut self, width: u32, height: u32, frame_rate: u32, hwaccel: HwAccel) -> Result<(), DecodeError> {
+    fn respawn(
+        &mut self,
+        width: u32,
+        height: u32,
+        frame_rate: u32,
+        hwaccel: HwAccel,
+    ) -> Result<(), DecodeError> {
         self.shutdown();
         *self = FfmpegDecoder::new(self.codec, hwaccel, width, height, frame_rate)?;
         Ok(())
@@ -209,7 +212,11 @@ impl FfmpegDecoder {
         self.codec
     }
 
-    fn write_payload(&mut self, payload: &[u8], expect: (u32, u32, Rect)) -> Result<(), DecodeError> {
+    fn write_payload(
+        &mut self,
+        payload: &[u8],
+        expect: (u32, u32, Rect),
+    ) -> Result<(), DecodeError> {
         // If the hw-accelerated ffmpeg died (e.g. VAAPI unusable on this
         // machine), retry once in software before giving up.
         for attempt in 0..2 {
@@ -256,7 +263,12 @@ impl Decoder for FfmpegDecoder {
                 (
                     self.width,
                     self.height,
-                    Rect { x: 0, y: 0, x2: self.width as i32, y2: self.height as i32 },
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        x2: self.width as i32,
+                        y2: self.height as i32,
+                    },
                 )
             }
             CodecKind::Mjpeg => {

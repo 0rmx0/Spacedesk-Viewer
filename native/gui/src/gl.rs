@@ -118,14 +118,37 @@ impl Renderer {
         let white_tex = {
             let t = gl.create_texture().unwrap();
             gl.bind_texture(glow::TEXTURE_2D, Some(t));
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
             gl.tex_image_2d(
-                glow::TEXTURE_2D, 0, glow::RGBA as i32, 1, 1, 0,
-                glow::RGBA, glow::UNSIGNED_BYTE, Some(&[255u8, 255, 255, 255]),
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                1,
+                1,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                Some(&[255u8, 255, 255, 255]),
             );
             t
         };
@@ -133,10 +156,26 @@ impl Renderer {
         let mk_tex = |gl: &glow::Context| {
             let t = gl.create_texture().unwrap();
             gl.bind_texture(glow::TEXTURE_2D, Some(t));
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
             t
         };
         let canvas_tex = mk_tex(&gl);
@@ -158,7 +197,11 @@ impl Renderer {
             1.0, 1.0,  1.0, 1.0,
             0.0, 1.0,  0.0, 1.0,
         ];
-        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, f32_slice_as_u8(&quad), glow::STATIC_DRAW);
+        gl.buffer_data_u8_slice(
+            glow::ARRAY_BUFFER,
+            f32_slice_as_u8(&quad),
+            glow::STATIC_DRAW,
+        );
         gl.enable_vertex_attrib_array(0);
         gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 16, 0);
         gl.enable_vertex_attrib_array(1);
@@ -193,15 +236,37 @@ impl Renderer {
         let gl = &self.gl;
         let t = gl.create_texture().unwrap();
         gl.bind_texture(glow::TEXTURE_2D, Some(t));
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::LINEAR as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_S,
+            glow::CLAMP_TO_EDGE as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_WRAP_T,
+            glow::CLAMP_TO_EDGE as i32,
+        );
         gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
         gl.tex_image_2d(
-            glow::TEXTURE_2D, 0, glow::RGBA as i32,
-            atlas.width as i32, atlas.height as i32, 0,
-            glow::RGBA, glow::UNSIGNED_BYTE, Some(&atlas.data),
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA as i32,
+            atlas.width as i32,
+            atlas.height as i32,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            Some(&atlas.data),
         );
         self.font_tex = Some(t);
         self.font = Some(atlas.clone());
@@ -213,7 +278,12 @@ impl Renderer {
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         gl.viewport(0, 0, viewport.0 as i32, viewport.1 as i32);
         gl.use_program(Some(self.ui_prog));
-        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_resolution").as_ref(), viewport.0 as f32, viewport.1 as f32);
+        gl.uniform_2_f32(
+            gl.get_uniform_location(self.ui_prog, "u_resolution")
+                .as_ref(),
+            viewport.0 as f32,
+            viewport.1 as f32,
+        );
         gl.enable(glow::BLEND);
         gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
         // a VAO must be bound for draw_arrays in a core profile
@@ -229,14 +299,46 @@ impl Renderer {
         gl.bind_texture(glow::TEXTURE_2D, None);
     }
 
-    unsafe fn ui_quad(&self, x: f32, y: f32, w: f32, h: f32, uv: (f32, f32, f32, f32), tex: glow::Texture, color: [f32; 4]) {
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn ui_quad(
+        &self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        uv: (f32, f32, f32, f32),
+        tex: glow::Texture,
+        color: [f32; 4],
+    ) {
         let gl = &self.gl;
         gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_offset").as_ref(), x, y);
-        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_size").as_ref(), w, h);
-        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_uv0").as_ref(), uv.0, uv.1);
-        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_uv1").as_ref(), uv.2, uv.3);
-        gl.uniform_4_f32(gl.get_uniform_location(self.ui_prog, "u_color").as_ref(), color[0], color[1], color[2], color[3]);
+        gl.uniform_2_f32(
+            gl.get_uniform_location(self.ui_prog, "u_offset").as_ref(),
+            x,
+            y,
+        );
+        gl.uniform_2_f32(
+            gl.get_uniform_location(self.ui_prog, "u_size").as_ref(),
+            w,
+            h,
+        );
+        gl.uniform_2_f32(
+            gl.get_uniform_location(self.ui_prog, "u_uv0").as_ref(),
+            uv.0,
+            uv.1,
+        );
+        gl.uniform_2_f32(
+            gl.get_uniform_location(self.ui_prog, "u_uv1").as_ref(),
+            uv.2,
+            uv.3,
+        );
+        gl.uniform_4_f32(
+            gl.get_uniform_location(self.ui_prog, "u_color").as_ref(),
+            color[0],
+            color[1],
+            color[2],
+            color[3],
+        );
         gl.draw_arrays(glow::TRIANGLES, 0, 6);
     }
 
@@ -247,13 +349,17 @@ impl Renderer {
 
     /// Text with pen at (x, baseline) — y is the baseline in screen coords.
     pub unsafe fn draw_text(&self, x: f32, baseline: f32, scale: f32, text: &str, color: [f32; 4]) {
-        let (Some(font), Some(tex)) = (&self.font, self.font_tex) else { return };
+        let (Some(font), Some(tex)) = (&self.font, self.font_tex) else {
+            return;
+        };
         let gl = &self.gl;
         gl.bind_texture(glow::TEXTURE_2D, Some(tex));
         let mut pen_x = x;
         for ch in text.chars() {
             let cu = ch as u32;
-            if cu < crate::font::FIRST_CHAR || cu >= crate::font::FIRST_CHAR + crate::font::GLYPH_COUNT as u32 {
+            if cu < crate::font::FIRST_CHAR
+                || cu >= crate::font::FIRST_CHAR + crate::font::GLYPH_COUNT as u32
+            {
                 pen_x += font.ascent * 0.3 * scale;
                 continue;
             }
@@ -276,14 +382,19 @@ impl Renderer {
     /// Width of a text in pixels at the given scale.
     pub fn text_width(&self, scale: f32, text: &str) -> f32 {
         match &self.font {
-            Some(font) => text.chars().map(|ch| {
-                let cu = ch as u32;
-                if cu < crate::font::FIRST_CHAR || cu >= crate::font::FIRST_CHAR + crate::font::GLYPH_COUNT as u32 {
-                    font.ascent * 0.3 * scale
-                } else {
-                    font.glyphs[(cu - crate::font::FIRST_CHAR) as usize].advance * scale
-                }
-            }).sum(),
+            Some(font) => text
+                .chars()
+                .map(|ch| {
+                    let cu = ch as u32;
+                    if cu < crate::font::FIRST_CHAR
+                        || cu >= crate::font::FIRST_CHAR + crate::font::GLYPH_COUNT as u32
+                    {
+                        font.ascent * 0.3 * scale
+                    } else {
+                        font.glyphs[(cu - crate::font::FIRST_CHAR) as usize].advance * scale
+                    }
+                })
+                .sum(),
             None => text.len() as f32 * 8.0 * scale,
         }
     }
@@ -296,12 +407,23 @@ impl Renderer {
         gl.bind_texture(glow::TEXTURE_2D, Some(self.canvas_tex));
         gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
         gl.tex_image_2d(
-            glow::TEXTURE_2D, 0, glow::RGBA as i32, w as i32, h as i32, 0,
-            glow::RGBA, glow::UNSIGNED_BYTE, None,
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA as i32,
+            w as i32,
+            h as i32,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            None,
         );
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.canvas_fbo));
         gl.framebuffer_texture_2d(
-            glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.canvas_tex), 0,
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(self.canvas_tex),
+            0,
         );
         gl.viewport(0, 0, w as i32, h as i32);
         gl.clear_color(0.0, 0.0, 0.0, 1.0);
@@ -320,8 +442,15 @@ impl Renderer {
             gl.bind_texture(glow::TEXTURE_2D, Some(self.tile_tex));
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
             gl.tex_image_2d(
-                glow::TEXTURE_2D, 0, glow::RGBA as i32, tw as i32, th as i32, 0,
-                glow::RGBA, glow::UNSIGNED_BYTE, None,
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                tw as i32,
+                th as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                None,
             );
             self.tile_size = (tw, th);
         }
@@ -333,8 +462,14 @@ impl Renderer {
         gl.bind_texture(glow::TEXTURE_2D, Some(self.tile_tex));
         gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, align);
         gl.tex_sub_image_2d(
-            glow::TEXTURE_2D, 0, 0, 0, tw as i32, th as i32,
-            fmt, glow::UNSIGNED_BYTE,
+            glow::TEXTURE_2D,
+            0,
+            0,
+            0,
+            tw as i32,
+            th as i32,
+            fmt,
+            glow::UNSIGNED_BYTE,
             glow::PixelUnpackData::Slice(&frame.data),
         );
 
@@ -342,9 +477,22 @@ impl Renderer {
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.canvas_fbo));
         gl.viewport(0, 0, screen.0.max(1) as i32, screen.1.max(1) as i32);
         gl.use_program(Some(self.quad_prog));
-        gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_resolution").as_ref(), screen.0 as f32, screen.1 as f32);
-        gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_offset").as_ref(), frame.rect.x as f32, frame.rect.y as f32);
-        gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_size").as_ref(), tw as f32, th as f32);
+        gl.uniform_2_f32(
+            gl.get_uniform_location(self.quad_prog, "u_resolution")
+                .as_ref(),
+            screen.0 as f32,
+            screen.1 as f32,
+        );
+        gl.uniform_2_f32(
+            gl.get_uniform_location(self.quad_prog, "u_offset").as_ref(),
+            frame.rect.x as f32,
+            frame.rect.y as f32,
+        );
+        gl.uniform_2_f32(
+            gl.get_uniform_location(self.quad_prog, "u_size").as_ref(),
+            tw as f32,
+            th as f32,
+        );
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(self.tile_tex));
         gl.uniform_1_i32(gl.get_uniform_location(self.quad_prog, "u_tex").as_ref(), 0);
@@ -355,7 +503,11 @@ impl Renderer {
     }
 
     /// Draw the canvas to the window, plus the remote cursor if any.
-    pub unsafe fn present(&mut self, viewport: (u32, u32), cursor: Option<(&CursorImage, i32, i32)>) {
+    pub unsafe fn present(
+        &mut self,
+        viewport: (u32, u32),
+        cursor: Option<(&CursorImage, i32, i32)>,
+    ) {
         let gl = &self.gl;
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         gl.viewport(0, 0, viewport.0 as i32, viewport.1 as i32);
@@ -366,7 +518,10 @@ impl Renderer {
             gl.use_program(Some(self.present_prog));
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.canvas_tex));
-            gl.uniform_1_i32(gl.get_uniform_location(self.present_prog, "u_tex").as_ref(), 0);
+            gl.uniform_1_i32(
+                gl.get_uniform_location(self.present_prog, "u_tex").as_ref(),
+                0,
+            );
             // a VAO must be bound in a core profile even for attribute-less
             // draws (gl_VertexID only), otherwise draw_arrays is a no-op
             gl.bind_vertex_array(Some(self.quad_vao));
@@ -379,17 +534,37 @@ impl Renderer {
                 gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
                 gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
                 gl.tex_image_2d(
-                    glow::TEXTURE_2D, 0, glow::RGBA as i32, cur.width as i32, cur.height as i32, 0,
-                    glow::RGBA, glow::UNSIGNED_BYTE, Some(&cur.rgba),
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::RGBA as i32,
+                    cur.width as i32,
+                    cur.height as i32,
+                    0,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    Some(&cur.rgba),
                 );
                 self.cursor_size = (cur.width, cur.height);
             }
             gl.enable(glow::BLEND);
             gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
             gl.use_program(Some(self.quad_prog));
-            gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_resolution").as_ref(), viewport.0 as f32, viewport.1 as f32);
-            gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_offset").as_ref(), (cx - cur.x_hot) as f32, (cy - cur.y_hot) as f32);
-            gl.uniform_2_f32(gl.get_uniform_location(self.quad_prog, "u_size").as_ref(), cur.width as f32, cur.height as f32);
+            gl.uniform_2_f32(
+                gl.get_uniform_location(self.quad_prog, "u_resolution")
+                    .as_ref(),
+                viewport.0 as f32,
+                viewport.1 as f32,
+            );
+            gl.uniform_2_f32(
+                gl.get_uniform_location(self.quad_prog, "u_offset").as_ref(),
+                (cx - cur.x_hot) as f32,
+                (cy - cur.y_hot) as f32,
+            );
+            gl.uniform_2_f32(
+                gl.get_uniform_location(self.quad_prog, "u_size").as_ref(),
+                cur.width as f32,
+                cur.height as f32,
+            );
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
             gl.uniform_1_i32(gl.get_uniform_location(self.quad_prog, "u_tex").as_ref(), 0);
@@ -439,7 +614,13 @@ fn f32_slice_as_u8(slice: &[f32]) -> &[u8] {
 
 /// Convert a spacedesk cursor bitmap payload to RGBA.
 /// flags: 1 = monochrome (1bpp AND/XOR mask), 4 = masked color (BGRA pixels).
-pub fn cursor_payload_to_rgba(width: u32, height: u32, pitch: u32, flags: u32, payload: &[u8]) -> Vec<u8> {
+pub fn cursor_payload_to_rgba(
+    width: u32,
+    height: u32,
+    pitch: u32,
+    flags: u32,
+    payload: &[u8],
+) -> Vec<u8> {
     let w = width as usize;
     let h = height as usize;
     let mut out = vec![0u8; w * h * 4];
@@ -450,7 +631,12 @@ pub fn cursor_payload_to_rgba(width: u32, height: u32, pitch: u32, flags: u32, p
                 for x in 0..w {
                     let src = y * pitch + x * 4;
                     if src + 4 <= payload.len() {
-                        let (b, g, r, a) = (payload[src], payload[src + 1], payload[src + 2], payload[src + 3]);
+                        let (b, g, r, a) = (
+                            payload[src],
+                            payload[src + 1],
+                            payload[src + 2],
+                            payload[src + 3],
+                        );
                         let dst = (y * w + x) * 4;
                         out[dst] = r;
                         out[dst + 1] = g;
@@ -461,16 +647,27 @@ pub fn cursor_payload_to_rgba(width: u32, height: u32, pitch: u32, flags: u32, p
             }
         }
         1 => {
-            let row_bytes = ((w + 31) / 32) * 4;
+            let row_bytes = w.div_ceil(32) * 4;
             let and_len = row_bytes * h;
             for y in 0..h {
                 for x in 0..w {
                     let byte = y * row_bytes + x / 8;
                     let bit = 7 - (x % 8);
                     let and = payload.get(byte).map(|b| (b >> bit) & 1).unwrap_or(1);
-                    let xor = payload.get(and_len + byte).map(|b| (b >> bit) & 1).unwrap_or(0);
+                    let xor = payload
+                        .get(and_len + byte)
+                        .map(|b| (b >> bit) & 1)
+                        .unwrap_or(0);
                     let dst = (y * w + x) * 4;
-                    let v = if and == 0 { if xor == 1 { 255 } else { 0 } } else { 0 };
+                    let v = if and == 0 {
+                        if xor == 1 {
+                            255
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
                     out[dst] = v;
                     out[dst + 1] = v;
                     out[dst + 2] = v;

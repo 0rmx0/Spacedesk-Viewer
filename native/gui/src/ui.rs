@@ -69,7 +69,14 @@ impl Ui {
     }
 
     /// Feed per-frame input. `clicked` is derived from the button transition.
-    pub fn begin(&mut self, mouse: (f32, f32), down: bool, chars: Vec<char>, backspace: bool, enter: bool) {
+    pub fn begin(
+        &mut self,
+        mouse: (f32, f32),
+        down: bool,
+        chars: Vec<char>,
+        backspace: bool,
+        enter: bool,
+    ) {
         let clicked = self.prev_down && !down;
         self.released = if clicked { self.pressed } else { 0 };
         if clicked {
@@ -98,11 +105,16 @@ impl Ui {
         // while a popup is open, widgets underneath it must not capture input
         if self.open_popup != 0 && id != self.open_popup && id / 1000 != self.open_popup {
             let (px, py, pw, ph) = self.popup_rect;
-            if self.mouse.0 >= px && self.mouse.0 < px + pw && self.mouse.1 >= py && self.mouse.1 < py + ph {
+            if self.mouse.0 >= px
+                && self.mouse.0 < px + pw
+                && self.mouse.1 >= py
+                && self.mouse.1 < py + ph
+            {
                 return false;
             }
         }
-        let inside = self.mouse.0 >= x && self.mouse.0 < x + w && self.mouse.1 >= y && self.mouse.1 < y + h;
+        let inside =
+            self.mouse.0 >= x && self.mouse.0 < x + w && self.mouse.1 >= y && self.mouse.1 < y + h;
         if inside && self.hot == 0 {
             self.hot = id;
         }
@@ -122,7 +134,18 @@ impl Ui {
     }
 
     /// Returns true on click.
-    pub fn button(&mut self, r: &Renderer, id: u32, x: f32, y: f32, w: f32, h: f32, label: &str, accent: bool) -> bool {
+    #[allow(clippy::too_many_arguments)]
+    pub fn button(
+        &mut self,
+        r: &Renderer,
+        id: u32,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        label: &str,
+        accent: bool,
+    ) -> bool {
         let inside = self.hit(id, x, y, w, h);
         let clicked = self.take_click(id, inside);
         let bg = if self.pressed == id && inside {
@@ -147,7 +170,18 @@ impl Ui {
     }
 
     /// Returns true when Enter was pressed while focused.
-    pub fn text_field(&mut self, r: &Renderer, id: u32, x: f32, y: f32, w: f32, buf: &mut String, numeric: bool, placeholder: &str) -> bool {
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_field(
+        &mut self,
+        r: &Renderer,
+        id: u32,
+        x: f32,
+        y: f32,
+        w: f32,
+        buf: &mut String,
+        numeric: bool,
+        placeholder: &str,
+    ) -> bool {
         let inside = self.hit(id, x, y, w, FIELD_H);
         if self.take_click(id, inside) {
             self.focus = id;
@@ -172,13 +206,25 @@ impl Ui {
         let enter = focused && self.enter;
         unsafe {
             r.draw_rect(x, y, w, FIELD_H, COL_FIELD);
-            let border = if focused { COL_BORDER_FOCUS } else { COL_BORDER };
+            let border = if focused {
+                COL_BORDER_FOCUS
+            } else {
+                COL_BORDER
+            };
             r.draw_rect(x, y, w, 1.0, border);
             r.draw_rect(x, y + FIELD_H - 1.0, w, 1.0, border);
             r.draw_rect(x, y, 1.0, FIELD_H, border);
             r.draw_rect(x + w - 1.0, y, 1.0, FIELD_H, border);
-            let shown = if buf.is_empty() { placeholder.to_string() } else { buf.clone() };
-            let col = if buf.is_empty() { COL_TEXT_DIM } else { COL_TEXT };
+            let shown = if buf.is_empty() {
+                placeholder.to_string()
+            } else {
+                buf.clone()
+            };
+            let col = if buf.is_empty() {
+                COL_TEXT_DIM
+            } else {
+                COL_TEXT
+            };
             r.draw_text(x + 7.0, y + FIELD_H / 2.0 + 7.0, 1.0, &shown, col);
             if focused && self.frame % 60 < 35 {
                 let tw = r.text_width(1.0, buf);
@@ -188,14 +234,26 @@ impl Ui {
         enter
     }
 
-    pub fn checkbox(&mut self, r: &Renderer, id: u32, x: f32, y: f32, label: &str, checked: &mut bool) {
+    pub fn checkbox(
+        &mut self,
+        r: &Renderer,
+        id: u32,
+        x: f32,
+        y: f32,
+        label: &str,
+        checked: &mut bool,
+    ) {
         let inside = self.hit(id, x, y, 18.0, 18.0);
         if self.take_click(id, inside) {
             *checked = !*checked;
         }
         unsafe {
             r.draw_rect(x, y, 18.0, 18.0, COL_FIELD);
-            let border = if self.hot == id { COL_BORDER_FOCUS } else { COL_BORDER };
+            let border = if self.hot == id {
+                COL_BORDER_FOCUS
+            } else {
+                COL_BORDER
+            };
             r.draw_rect(x, y, 18.0, 1.0, border);
             r.draw_rect(x, y + 17.0, 18.0, 1.0, border);
             r.draw_rect(x, y, 1.0, 18.0, border);
@@ -209,7 +267,17 @@ impl Ui {
 
     /// Returns true when the selection changed. The open popup is *drawn*
     /// later via [`Ui::draw_popups`] so it stays on top of other widgets.
-    pub fn dropdown(&mut self, r: &Renderer, id: u32, x: f32, y: f32, w: f32, options: &'static [&'static str], sel: &mut usize) -> bool {
+    #[allow(clippy::too_many_arguments)]
+    pub fn dropdown(
+        &mut self,
+        r: &Renderer,
+        id: u32,
+        x: f32,
+        y: f32,
+        w: f32,
+        options: &'static [&'static str],
+        sel: &mut usize,
+    ) -> bool {
         let inside = self.hit(id, x, y, w, FIELD_H);
         if self.take_click(id, inside) {
             self.open_popup = if self.open_popup == id { 0 } else { id };
@@ -217,7 +285,11 @@ impl Ui {
         let open = self.open_popup == id;
         unsafe {
             r.draw_rect(x, y, w, FIELD_H, COL_FIELD);
-            let border = if open || self.hot == id { COL_BORDER_FOCUS } else { COL_BORDER };
+            let border = if open || self.hot == id {
+                COL_BORDER_FOCUS
+            } else {
+                COL_BORDER
+            };
             r.draw_rect(x, y, w, 1.0, border);
             r.draw_rect(x, y + FIELD_H - 1.0, w, 1.0, border);
             r.draw_rect(x, y, 1.0, FIELD_H, border);
@@ -225,7 +297,13 @@ impl Ui {
             let cur = options.get(*sel).copied().unwrap_or("");
             r.draw_text(x + 7.0, y + FIELD_H / 2.0 + 7.0, 1.0, cur, COL_TEXT);
             let ax = x + w - 16.0;
-            r.draw_text(ax, y + FIELD_H / 2.0 + 7.0, 1.0, if open { "^" } else { "v" }, COL_TEXT_DIM);
+            r.draw_text(
+                ax,
+                y + FIELD_H / 2.0 + 7.0,
+                1.0,
+                if open { "^" } else { "v" },
+                COL_TEXT_DIM,
+            );
         }
         let mut changed = false;
         if open {
@@ -247,7 +325,13 @@ impl Ui {
             }
             if self.open_popup == id {
                 self.popup_rect = (x, y + FIELD_H, w, options.len() as f32 * FIELD_H);
-                self.popups.push(PopupDraw { x, y, w, options, sel: *sel });
+                self.popups.push(PopupDraw {
+                    x,
+                    y,
+                    w,
+                    options,
+                    sel: *sel,
+                });
             } else if self.open_popup == 0 {
                 self.popup_rect = (0.0, 0.0, 0.0, 0.0);
             }
@@ -268,8 +352,10 @@ impl Ui {
                 r.draw_rect(p.x + p.w - 1.0, p.y + FIELD_H, 1.0, n * FIELD_H, COL_BORDER);
                 for (i, opt) in p.options.iter().enumerate() {
                     let oy = p.y + FIELD_H + i as f32 * FIELD_H;
-                    let hov = self.mouse.0 >= p.x && self.mouse.0 < p.x + p.w
-                        && self.mouse.1 >= oy && self.mouse.1 < oy + FIELD_H;
+                    let hov = self.mouse.0 >= p.x
+                        && self.mouse.0 < p.x + p.w
+                        && self.mouse.1 >= oy
+                        && self.mouse.1 < oy + FIELD_H;
                     if hov {
                         r.draw_rect(p.x, oy, p.w, FIELD_H, COL_BTN_HOT);
                     }
