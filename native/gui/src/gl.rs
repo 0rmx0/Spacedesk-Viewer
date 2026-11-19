@@ -4,7 +4,6 @@
 
 use glow::HasContext;
 use spacedesk_core::frame::{DecodedFrame, PixelFormat};
-use std::ffi::CString;
 
 const VIDEO_VS: &str = r#"#version 330 core
 out vec2 v_uv;
@@ -74,7 +73,7 @@ pub struct Renderer {
     tex_main: glow::Texture,
     tex_uv: glow::Texture,
     cursor_tex: glow::Texture,
-    cursor_vbo: glow::Buffer,
+    _cursor_vbo: glow::Buffer,
     cursor_vao: glow::VertexArray,
     main_size: (u32, u32),
     uv_size: (u32, u32),
@@ -139,7 +138,7 @@ impl Renderer {
             tex_main,
             tex_uv,
             cursor_tex,
-            cursor_vbo,
+            _cursor_vbo: cursor_vbo,
             cursor_vao,
             main_size: (0, 0),
             uv_size: (0, 0),
@@ -147,14 +146,19 @@ impl Renderer {
         }
     }
 
+    pub unsafe fn clear(&self) {
+        self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
+        self.gl.clear(glow::COLOR_BUFFER_BIT);
+    }
+
     pub unsafe fn resize(&self, width: u32, height: u32) {
         self.gl.viewport(0, 0, width as i32, height as i32);
     }
 
-    unsafe fn alloc_main(&self, w: u32, h: u32, format: u32, type_: u32, internal: i32) {
-        self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
-        self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-        self.gl.tex_image_2d(
+    unsafe fn alloc_main(gl: &glow::Context, tex: glow::Texture, w: u32, h: u32, format: u32, type_: u32, internal: i32) {
+        gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+        gl.tex_image_2d(
             glow::TEXTURE_2D,
             0,
             internal,
@@ -165,35 +169,34 @@ impl Renderer {
             type_,
             None,
         );
-        self.main_size = (w, h);
     }
 
     /// Upload `frame` and draw it stretched to the whole viewport, then the
     /// remote cursor if provided.
     pub unsafe fn draw(
-        &self,
+        &mut self,
         frame: &DecodedFrame,
         viewport: (u32, u32),
         cursor: Option<(&CursorImage, i32, i32)>,
     ) {
-        let gl = &self.gl;
-        gl.viewport(0, 0, viewport.0 as i32, viewport.1 as i32);
-        gl.clear_color(0.0, 0.0, 0.0, 1.0);
-        gl.clear(glow::COLOR_BUFFER_BIT);
+                self.gl.viewport(0, 0, viewport.0 as i32, viewport.1 as i32);
+        self.gl.clear_color(0.0, 0.0, 0.0, 1.0);
+        self.gl.clear(glow::COLOR_BUFFER_BIT);
 
-        gl.use_program(Some(self.video_prog));
+        self.gl.use_program(Some(self.video_prog));
         match frame.format {
             PixelFormat::Nv12 => {
                 let (w, h) = (frame.width, frame.height);
                 let cw = (w + 1) / 2;
                 let ch = (h + 1) / 2;
                 if self.main_size != (w, h) {
-                    self.alloc_main(w, h, glow::RED, glow::UNSIGNED_BYTE, glow::R8 as i32);
+                    Self::alloc_main(&self.gl, self.tex_main, w, h, glow::RED, glow::UNSIGNED_BYTE, glow::R8 as i32);
+                    self.main_size = (w, h);
                 }
-                gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
-                gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-                gl.tex_sub_image_2d(
+                self.gl.active_texture(glow::TEXTURE0);
+                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
+                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+                self.gl.tex_sub_image_2d(
                     glow::TEXTURE_2D,
                     0,
                     0,
@@ -205,9 +208,9 @@ impl Renderer {
                     glow::PixelUnpackData::Slice(&frame.data[..(w * h) as usize]),
                 );
                 if self.uv_size != (cw, ch) {
-                    gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_uv));
-                    gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-                    gl.tex_image_2d(
+                    self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_uv));
+                    self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+                    self.gl.tex_image_2d(
                         glow::TEXTURE_2D,
                         0,
                         glow::RG8 as i32,
@@ -220,9 +223,9 @@ impl Renderer {
                     );
                     self.uv_size = (cw, ch);
                 }
-                gl.active_texture(glow::TEXTURE1);
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_uv));
-                gl.tex_sub_image_2d(
+                self.gl.active_texture(glow::TEXTURE1);
+                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_uv));
+                self.gl.tex_sub_image_2d(
                     glow::TEXTURE_2D,
                     0,
                     0,
@@ -233,27 +236,28 @@ impl Renderer {
                     glow::UNSIGNED_BYTE,
                     glow::PixelUnpackData::Slice(&frame.data[(w * h) as usize..]),
                 );
-                gl.uniform_1_i32(
-                    gl.get_uniform_location(self.video_prog, c"u_tex").as_ref(),
+                self.gl.uniform_1_i32(
+                    self.gl.get_uniform_location(self.video_prog, "u_tex").as_ref(),
                     0,
                 );
-                gl.uniform_1_i32(
-                    gl.get_uniform_location(self.video_prog, c"u_tex_uv").as_ref(),
+                self.gl.uniform_1_i32(
+                    self.gl.get_uniform_location(self.video_prog, "u_tex_uv").as_ref(),
                     1,
                 );
-                gl.uniform_1_i32(
-                    gl.get_uniform_location(self.video_prog, c"u_mode").as_ref(),
+                self.gl.uniform_1_i32(
+                    self.gl.get_uniform_location(self.video_prog, "u_mode").as_ref(),
                     1,
                 );
             }
             PixelFormat::Bgra => {
                 if self.main_size != (frame.width, frame.height) {
-                    self.alloc_main(frame.width, frame.height, glow::BGRA, glow::UNSIGNED_BYTE, glow::RGBA as i32);
+                    Self::alloc_main(&self.gl, self.tex_main, frame.width, frame.height, glow::BGRA, glow::UNSIGNED_BYTE, glow::RGBA as i32);
+                    self.main_size = (frame.width, frame.height);
                 }
-                gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
-                gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
-                gl.tex_sub_image_2d(
+                self.gl.active_texture(glow::TEXTURE0);
+                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
+                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+                self.gl.tex_sub_image_2d(
                     glow::TEXTURE_2D,
                     0,
                     0,
@@ -264,23 +268,24 @@ impl Renderer {
                     glow::UNSIGNED_BYTE,
                     glow::PixelUnpackData::Slice(&frame.data),
                 );
-                gl.uniform_1_i32(
-                    gl.get_uniform_location(self.video_prog, c"u_tex").as_ref(),
+                self.gl.uniform_1_i32(
+                    self.gl.get_uniform_location(self.video_prog, "u_tex").as_ref(),
                     0,
                 );
-                gl.uniform_1_i32(
-                    gl.get_uniform_location(self.video_prog, c"u_mode").as_ref(),
+                self.gl.uniform_1_i32(
+                    self.gl.get_uniform_location(self.video_prog, "u_mode").as_ref(),
                     0,
                 );
             }
             PixelFormat::Rgba => {
                 if self.main_size != (frame.width, frame.height) {
-                    self.alloc_main(frame.width, frame.height, glow::RGBA, glow::UNSIGNED_BYTE, glow::RGBA as i32);
+                    Self::alloc_main(&self.gl, self.tex_main, frame.width, frame.height, glow::RGBA, glow::UNSIGNED_BYTE, glow::RGBA as i32);
+                    self.main_size = (frame.width, frame.height);
                 }
-                gl.active_texture(glow::TEXTURE0);
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
-                gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
-                gl.tex_sub_image_2d(
+                self.gl.active_texture(glow::TEXTURE0);
+                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_main));
+                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+                self.gl.tex_sub_image_2d(
                     glow::TEXTURE_2D,
                     0,
                     0,
@@ -291,23 +296,23 @@ impl Renderer {
                     glow::UNSIGNED_BYTE,
                     glow::PixelUnpackData::Slice(&frame.data),
                 );
-                gl.uniform_1_i32(
-                    gl.get_uniform_location(self.video_prog, c"u_tex").as_ref(),
+                self.gl.uniform_1_i32(
+                    self.gl.get_uniform_location(self.video_prog, "u_tex").as_ref(),
                     0,
                 );
-                gl.uniform_1_i32(
-                    gl.get_uniform_location(self.video_prog, c"u_mode").as_ref(),
+                self.gl.uniform_1_i32(
+                    self.gl.get_uniform_location(self.video_prog, "u_mode").as_ref(),
                     0,
                 );
             }
         }
-        gl.draw_arrays(glow::TRIANGLES, 0, 3);
+        self.gl.draw_arrays(glow::TRIANGLES, 0, 3);
 
         if let Some((cur, cx, cy)) = cursor {
             if self.cursor_size != (cur.width, cur.height) {
-                gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
-                gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
-                gl.tex_image_2d(
+                self.gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
+                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+                self.gl.tex_image_2d(
                     glow::TEXTURE_2D,
                     0,
                     glow::RGBA as i32,
@@ -320,34 +325,34 @@ impl Renderer {
                 );
                 self.cursor_size = (cur.width, cur.height);
             }
-            gl.enable(glow::BLEND);
-            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-            gl.use_program(Some(self.cursor_prog));
-            gl.uniform_2_f32(
-                gl.get_uniform_location(self.cursor_prog, c"u_resolution").as_ref(),
+            self.gl.enable(glow::BLEND);
+            self.gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            self.gl.use_program(Some(self.cursor_prog));
+            self.gl.uniform_2_f32(
+                self.gl.get_uniform_location(self.cursor_prog, "u_resolution").as_ref(),
                 viewport.0 as f32,
                 viewport.1 as f32,
             );
-            gl.uniform_2_f32(
-                gl.get_uniform_location(self.cursor_prog, c"u_offset").as_ref(),
+            self.gl.uniform_2_f32(
+                self.gl.get_uniform_location(self.cursor_prog, "u_offset").as_ref(),
                 (cx - cur.x_hot) as f32,
                 (cy - cur.y_hot) as f32,
             );
-            gl.uniform_2_f32(
-                gl.get_uniform_location(self.cursor_prog, c"u_size").as_ref(),
+            self.gl.uniform_2_f32(
+                self.gl.get_uniform_location(self.cursor_prog, "u_size").as_ref(),
                 cur.width as f32,
                 cur.height as f32,
             );
-            gl.active_texture(glow::TEXTURE0);
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
-            gl.uniform_1_i32(
-                gl.get_uniform_location(self.cursor_prog, c"u_tex").as_ref(),
+            self.gl.active_texture(glow::TEXTURE0);
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(self.cursor_tex));
+            self.gl.uniform_1_i32(
+                self.gl.get_uniform_location(self.cursor_prog, "u_tex").as_ref(),
                 0,
             );
-            gl.bind_vertex_array(Some(self.cursor_vao));
-            gl.draw_arrays(glow::TRIANGLES, 0, 6);
-            gl.bind_vertex_array(None);
-            gl.disable(glow::BLEND);
+            self.gl.bind_vertex_array(Some(self.cursor_vao));
+            self.gl.draw_arrays(glow::TRIANGLES, 0, 6);
+            self.gl.bind_vertex_array(None);
+            self.gl.disable(glow::BLEND);
         }
     }
 }
@@ -429,9 +434,4 @@ pub fn cursor_payload_to_rgba(width: u32, height: u32, pitch: u32, flags: u32, p
         }
     }
     out
-}
-
-#[allow(dead_code)]
-fn cstr(s: &str) -> CString {
-    CString::new(s).unwrap()
 }

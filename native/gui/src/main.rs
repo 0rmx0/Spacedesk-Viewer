@@ -11,6 +11,11 @@ mod gl;
 mod vkmap;
 
 use gl::{cursor_payload_to_rgba, CursorImage, Renderer};
+use glutin::config::ConfigTemplateBuilder;
+use glutin::display::GetGlDisplay;
+use glutin::prelude::*;
+use glutin_winit::{DisplayBuilder, GlWindow};
+use raw_window_handle::HasRawWindowHandle;
 use spacedesk_core::decoder::{Decoder, RawDecoder};
 use spacedesk_core::ffmpeg::{codec_for_compression, ffmpeg_available, FfmpegDecoder, HwAccel};
 use spacedesk_core::frame::DecodedFrame;
@@ -18,7 +23,6 @@ use spacedesk_core::protocol::{ClientType, Compression, CursorBitmapPacket, Iden
 use spacedesk_core::session::{run, ClientCommand, ClientConfig, ServerEvent};
 use std::num::NonZeroU32;
 use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
 use winit::event::{ElementState, Event, KeyEvent, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -155,7 +159,6 @@ struct AppState {
     frame_rate: u16,
     last_mouse: Option<(f64, f64)>,
     grabbed: bool,
-    dirty: bool,
 }
 
 impl AppState {
@@ -213,7 +216,6 @@ impl AppState {
                 };
                 if let Some(f) = frames.into_iter().last() {
                     self.latest_frame = Some(f);
-                    self.dirty = true;
                     window.request_redraw();
                 }
             }
@@ -264,12 +266,12 @@ fn main() {
         let _ = run(&cfg, ev_tx, cmd_rx);
     });
 
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoop::new().expect("failed to create event loop");
     let window_builder = WindowBuilder::new()
         .with_title("spacedesk viewer")
         .with_inner_size(winit::dpi::LogicalSize::new(args.win_size.0, args.win_size.1));
-    let template = glutin::config::ConfigTemplate::default();
-    let display_builder = glutin_winit::DisplayBuilder::new().with_window_builder(Some(window_builder));
+    let template = ConfigTemplateBuilder::new();
+    let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));
     let (window, gl_config) = display_builder
         .build(&event_loop, template, |configs| {
             configs
@@ -285,7 +287,6 @@ fn main() {
         .expect("failed to create window/GL config");
     let window = window.expect("no window");
 
-    use raw_window_handle::HasRawWindowHandle;
     let attrs = window.build_surface_attributes(Default::default());
     let gl_surface = unsafe { gl_config.display().create_window_surface(&gl_config, &attrs) }.unwrap();
     let gl_context = unsafe {
@@ -302,11 +303,9 @@ fn main() {
             .unwrap()
     };
     let gl_context = gl_context.make_current(&gl_surface).unwrap();
-    unsafe {
-        gl_surface
-            .set_swap_interval(&gl_context, glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()))
-            .unwrap();
-    }
+    gl_surface
+        .set_swap_interval(&gl_context, glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()))
+        .unwrap();
     let gl = unsafe {
         glow::Context::from_loader_function(|s| {
             gl_config
@@ -314,7 +313,7 @@ fn main() {
                 .get_proc_address(&std::ffi::CString::new(s).unwrap()) as *const std::ffi::c_void
         })
     };
-    let renderer = unsafe { Renderer::new(gl) };
+    let mut renderer = unsafe { Renderer::new(gl) };
     let size = window.inner_size();
     unsafe { renderer.resize(size.width.max(1), size.height.max(1)) };
 
@@ -340,23 +339,15 @@ fn main() {
         frame_rate: args.frame_rate,
         last_mouse: None,
         grabbed: args.kvm,
-        dirty: false,
     };
 
-    event_loop.run(move |event, _, control_flow| {
-        control_flow.set_poll();
+    let result = event_loop.run(move |event, elwt| {
+        elwt.set_control_flow(ControlFlow::Poll);
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => {
                     let _ = state.commands.send(ClientCommand::Disconnect);
-                    control_flow.set_exit();
-                }
-                WindowEvent::Resized(size) => {
-                    if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
-                        gl_surface.resize(&gl_context, w, h);
-                        unsafe { renderer.resize(w.get(), h.get()) };
-                    }
-                    window.request_redraw();
+                    elwt.exit();
                 }
                 WindowEvent::RedrawRequested => {
                     let size = window.inner_size();
@@ -370,11 +361,17 @@ fn main() {
                             };
                             renderer.draw(frame, viewport, cursor);
                         } else {
-                            gl.clear_color(0.0, 0.0, 0.0, 1.0);
-                            gl.clear(glow::COLOR_BUFFER_BIT);
+                            renderer.clear();
                         }
                         let _ = gl_surface.swap_buffers(&gl_context);
                     }
+                }
+                WindowEvent::Resized(size) => {
+                    if let (Some(w), Some(h)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
+                        gl_surface.resize(&gl_context, w, h);
+                        unsafe { renderer.resize(w.get(), h.get()) };
+                    }
+                    window.request_redraw();
                 }
                 WindowEvent::CursorMoved { position, .. } => {
                     if state.kvm {
@@ -444,7 +441,7 @@ fn main() {
                 }
                 _ => {}
             },
-            Event::MainEventsCleared => {
+            Event::AboutToWait => {
                 while let Ok(ev) = state.events.try_recv() {
                     state.handle_event(ev, &window);
                 }
@@ -452,4 +449,7 @@ fn main() {
             _ => {}
         }
     });
+    if let Err(e) = result {
+        eprintln!("event loop error: {}", e);
+    }
 }
