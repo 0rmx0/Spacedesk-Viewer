@@ -1,88 +1,44 @@
 # Spacedesk-Viewer
 
-My own settings for the spacedesk client that can be used offline
+Offline [spacedesk](https://spacedesk.net/) viewer — with a **native Linux client** (Rust) as the main, maintained component.
 
-> ## 🐧 Native Linux client (Ubuntu 24.04)
-> A **native, high-performance client** written in Rust now lives in [`native/`](native/README.md):
-> raw-TCP/WebSocket protocol client + **VA-API hardware H264 decoding** (FFmpeg) + **OpenGL rendering**,
-> with a headless CLI (`spacedesk-cli`) and a GUI (`spacedesk-viewer`) that has a home menu
-> (server IP, Connect) and a settings panel persisted to
-> `~/.config/spacedesk-viewer/settings.json`.
-> Build from `native/` (Cargo workspace): `cargo build --release` → `native/target/release/spacedesk-viewer`.
-> See [native/README.md](native/README.md) for build & usage.
+## 🐧 Native Linux client (`native/`, Rust) — recommended
 
-> Resources from [Liumeo](https://github.com/eagleoflqj "Liumeo's github page"),  Big thanks to him !
+Raw-TCP / WebSocket spacedesk protocol client with **VA-API hardware H264 decoding** (FFmpeg) and **OpenGL rendering**, plus a headless CLI (`spacedesk-cli`). The GUI (`spacedesk-viewer`) opens a **home menu** (server IP + Connect) with a **settings panel** (transport, compression, quality, FPS, resolution presets + custom, HW accel, KVM…) persisted to `~/.config/spacedesk-viewer/settings.json`.
 
-> [!IMPORTANT]\
-> Unfortunately I haven't update this program for a long time so many of the dependencies are ***VERY*** outdated, that means it's nearly impossible to update the current program. I will consider rewriting whole program in the near future. Please be patient and wait for the update!
+```bash
+# Ubuntu 24.04 dependencies
+sudo apt install build-essential ffmpeg mesa-va-drivers \
+    libxkbcommon-dev libwayland-dev libegl1 libgl1 libx11-6
 
+git clone https://github.com/0rmx0/Spacedesk-Viewer.git
+cd Spacedesk-Viewer/native
+cargo build --release
 
-## Description
+./target/release/spacedesk-viewer                          # home menu
+./target/release/spacedesk-viewer 192.168.1.10 --fps 60     # prefill + connect
+./target/release/spacedesk-cli 192.168.1.10 --frames 50 -v  # headless test
+```
 
-[spacedesk](https://spacedesk.net/ "spacedesk.net") can change your smart device with a screen to a projector of a Windows Computer.
+Full documentation (architecture, protocol, options, mock server, roadmap): [`native/README.md`](native/README.md).
 
-This project is an adaption of [spacedesk-HTML5-VIEWER](http://spacedesk.ph/html5viewer/ "spacedesk-HTML5-VIEWER") v0.9.9z.63 in order to use offline.
+Requirements: a **Windows PC with the [spacedesk server](https://spacedesk.net/#downloads) installed** (driver), and any Linux machine as the viewer.
 
-# Difference & Features
+## 🖥️ Legacy offline HTML5 viewer (Electron app in `src/`) — no longer maintained
+
+Adaptation of [spacedesk-HTML5-VIEWER](http://spacedesk.ph/html5viewer/) v0.9.9z.63 for offline use:
 
 + Remove google-analytics part
 + Localize all resources and rearrange them
 + Beautify the interface
 + Fix a bug with the fullscreen feature
 
-# How to run this software with my own settings ?
-## I suggest that you use this software by installing it locally
-```
-git clone https://github.com/clovislfbv/Spacedesk-Viewer.git
-cd Spacedesk-Viewer
-```
-
-## Then install the packages needed
-```
+```bash
 npm install
-```
-
-## Finally run the software with
-```
 npm run start
 ```
 
-# Requirement
+> [!NOTE]
+> The Electron app above is kept for reference only — its dependencies are very outdated. On Linux, use the **native client** instead.
 
-+ Primary device with [spacedesk server](https://spacedesk.net/#downloads "spacedesk server download page") installed
-  + supports
-    + ***only support Windows***
-+ Secondary device with [spacedesk-viewer](https://github.com/Anonymous-AAAA/Spacedesk-Viewer/releases "spacedesk-viewer release page") installed
-  + supports
-    + Windows
-    + Linux (`Debian`, `Ubuntu`, `Red Hat`, `Fedora`, `SUSE`)
-  
-  + or by installing it locally (see the chapter "How to run this software with my own settings ?")
-
-# Otherwise you can use the default installation without my custom settings :
-
-# Installation
-
-> Head to the [release page](https://github.com/Anonymous-AAAA/Spacedesk-Viewer/releases "spacedesk-viewer release page") and download the latest version of spacedesk-viewer.
-
-## Windows Users
-
-1. Download the file with `.exe` extension.
-2. Doble click on the installer to install spacedesk-viewer.
-3. It will automatically create a shortcut of spacedesk-viewer on your desktop.
-
-## Linux Users
-
-+ Debian, Ubuntu
-  1. Download the file with `.deb` extension.
-  2. Recommend using `dpkg` for installation.
-  3. Run the program with `spacedesk-viewer` command in the terminal.
-+ Red Hat, Fedora, SUSE
-  1. Download the file with `.rpm` extension.
-  2. Recommend using `rpm` for installation.
-  3. Run the program with `spacedesk-viewer` command in the terminal.
-
-## Mac Users
-
-+ ***Developing ...***
-+ ***Searching for contributor*** **ฅ ^• ω •^ ฅ**
+> Resources from [Liumeo](https://github.com/eagleoflqj "Liumeo's github page"), big thanks to him!

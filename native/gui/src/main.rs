@@ -1028,7 +1028,8 @@ fn draw_menu(state: &mut AppState, renderer: &Renderer, viewport: (u32, u32), wi
 
 fn main() {
     let settings = settings_from_args();
-    if settings.compression != Compression::Off as usize && !ffmpeg_available() {
+    // settings.compression is a dropdown index: 0 = h264, 1 = jpeg, 2 = off
+    if settings.compression == 0 && !ffmpeg_available() {
         log_err("warning: ffmpeg not found; H264 decoding needs it (`sudo apt install ffmpeg`) - JPEG/raw still work");
     }
 

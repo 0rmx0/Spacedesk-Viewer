@@ -103,13 +103,16 @@ cargo clippy --workspace --all-targets   # 0 warning attendu
 cargo fmt --check              # formatage vérifié
 ```
 
-> `core` et `cli` ne dépendent que de `jpeg-decoder` (crates.io) en plus de la
-> std ; `gui` utilise `winit 0.29` + `glutin 0.31`/`glutin-winit 0.4` +
-> `glow 0.14` + `ab_glyph` + `serde`/`serde_json` (crates.io).
+> `core` ne dépend que de `jpeg-decoder` (crates.io) en plus de la std ; `cli`
+> n'a aucune dépendance externe ; `gui` utilise `winit 0.29` +
+> `glutin 0.31`/`glutin-winit 0.4` + `glow 0.14` + `raw-window-handle 0.5` +
+> `ab_glyph` + `serde`/`serde_json` (crates.io).
 
 ## Utilisation
 
 ```bash
+# Depuis la racine du dépôt — ou depuis native/ avec ./target/release/...
+
 # GUI (menu d'accueil ; l'IP peut aussi être passée en argument)
 native/target/release/spacedesk-viewer
 native/target/release/spacedesk-viewer 192.168.1.10 --fps 60 --fullscreen
@@ -122,12 +125,37 @@ native/target/release/spacedesk-cli 192.168.1.10 --compression h264 \
 python3 native/examples/mock_server.py --port 28252 --frames 60 --tcp
 native/target/release/spacedesk-cli 127.0.0.1 --compression off \
     --frames 60 --dump /tmp/frames --no-reconnect -v
+
+# paquet .deb (Ubuntu 24.04)
+cd native/packaging && ./build-deb.sh 0.1.0
 ```
 
-Options communes : `--port`, `--transport tcp|ws`, `--compression h264|jpeg|off`,
-`--client-type 0|1|3`, `--quality 1-100`, `--subsampling 0|1|2`, `--fps 30|60`,
-`--resolution WxH|client`, `--hwaccel auto|vaapi|none`, `--no-reconnect`,
-`-v/--verbose` (voir `--help`).
+La variable d'environnement `SPACEDESK_HOST` pré-remplit aussi l'IP du serveur.
+
+Options du GUI (`spacedesk-viewer [server-ip] [options]`, voir `--help`) — les
+options ne font que **pré-remplir le menu**, jamais échouer :
+
+```
+ --port N            port serveur (défaut 28252)
+ --compression C     h264 | jpeg | off (défaut h264)
+ --quality N         1-100 (défaut 70)
+ --subsampling S     0=4:4:4 1=4:2:2 2=4:2:0 (défaut 2)
+ --fps F             30 | 60 (défaut 60)
+ --resolution WxH    résolution custom, ou 'client' (défaut client)
+ --size WxH          taille de la fenêtre (défaut 1280x720)
+ --fullscreen        plein écran dès la connexion
+ --no-kvm            désactive le contrôle clavier/souris
+ --hwaccel A         auto | vaapi | none (défaut auto)
+ --no-reconnect      ne pas se reconnecter après une perte de connexion
+ --transport T       tcp | ws (défaut tcp)
+ --client-type N     0..3 (défaut 0)
+ -v, --verbose       logs verbeux
+```
+
+Options du CLI (`spacedesk-cli <host> [options]`) : les mêmes plus
+`--frames N` (quitte après N frames décodées, 0 = infini), `--duration S`
+(secondes), `--dump DIR` (dump PPM des frames). Note : `--fps` vaut **30** par
+défaut côté CLI, **60** côté GUI.
 
 ## Protocole (référence rapide)
 
