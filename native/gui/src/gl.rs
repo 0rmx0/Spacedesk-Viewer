@@ -13,7 +13,9 @@ const PRESENT_VS: &str = r#"#version 330 core
 out vec2 v_uv;
 void main() {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
-    v_uv = vec2(p.x, 1.0 - p.y);
+    // canvas texture row 0 holds the BOTTOM of the remote screen (the tile
+    // pass wrote image-top to NDC y=+1 = last texture row), so sample v=p.y
+    v_uv = p;
     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }
 "#;
@@ -204,7 +206,11 @@ impl Renderer {
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.canvas_tex));
             gl.uniform_1_i32(gl.get_uniform_location(self.present_prog, "u_tex").as_ref(), 0);
+            // a VAO must be bound in a core profile even for attribute-less
+            // draws (gl_VertexID only), otherwise draw_arrays is a no-op
+            gl.bind_vertex_array(Some(self.quad_vao));
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
+            gl.bind_vertex_array(None);
         }
 
         if let Some((cur, cx, cy)) = cursor {

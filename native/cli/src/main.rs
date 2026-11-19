@@ -168,6 +168,7 @@ fn help() -> &'static str {
 
 enum ActiveDecoder {
     Raw(RawDecoder),
+    Jpeg(spacedesk_core::jpeg::JpegDecoder),
     Ffmpeg(FfmpegDecoder),
 }
 
@@ -264,6 +265,8 @@ fn main() {
                     (None, _) => true,
                     (Some(ActiveDecoder::Raw(_)), None) => false,
                     (Some(ActiveDecoder::Raw(_)), Some(_)) => true,
+                    (Some(ActiveDecoder::Jpeg(_)), Some(spacedesk_core::ffmpeg::CodecKind::Mjpeg)) => false,
+                    (Some(ActiveDecoder::Jpeg(_)), _) => true,
                     (Some(ActiveDecoder::Ffmpeg(_)), None) => true,
                     (Some(ActiveDecoder::Ffmpeg(_)), Some(c)) => {
                         // recreate when codec kind changes; FfmpegDecoder respawns on size change
@@ -277,8 +280,11 @@ fn main() {
                 if need_new {
                     decoder = match want_codec {
                         None => Some(ActiveDecoder::Raw(RawDecoder)),
+                        Some(spacedesk_core::ffmpeg::CodecKind::Mjpeg) => {
+                            Some(ActiveDecoder::Jpeg(spacedesk_core::jpeg::JpegDecoder))
+                        }
                         Some(codec) => {
-                            let (tw, th) = p.tile_dims();
+                            let (tw, th) = (p.width.max(1), p.height.max(1));
                             match FfmpegDecoder::new(
                                 codec,
                                 args.hwaccel.clone(),
@@ -296,6 +302,13 @@ fn main() {
                     };
                 }
                 let decoded: Vec<DecodedFrame> = match &mut decoder {
+                    Some(ActiveDecoder::Jpeg(d)) => match d.submit(&p) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            eprintln!("jpeg decode: {}", e);
+                            continue;
+                        }
+                    },
                     Some(ActiveDecoder::Raw(d)) => match d.submit(&p) {
                         Ok(f) => f,
                         Err(e) => {

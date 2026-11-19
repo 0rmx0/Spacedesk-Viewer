@@ -10,3 +10,4 @@ name = "spacedesk_core"
 path = "src/lib.rs"
 
 [dependencies]
+jpeg-decoder = "0.3"

@@ -159,7 +159,16 @@ fn parse_args() -> Result<Args, String> {
 
 enum ActiveDecoder {
     Raw(RawDecoder),
+    Jpeg(spacedesk_core::jpeg::JpegDecoder),
     Ffmpeg(FfmpegDecoder),
+}
+
+/// Log to stderr without ever panicking: when stdout/stderr is a pipe closed
+/// early (e.g. `... -v 2>&1 | head -20`), eprintln! would panic on EPIPE and
+/// kill the thread (or the whole process on the main thread).
+fn log_err(msg: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{}", msg);
 }
 
 struct AppState {
@@ -176,6 +185,18 @@ struct AppState {
     frame_rate: u16,
     last_mouse: Option<(f64, f64)>,
     grabbed: bool,
+    decode_errs: u64,
+}
+
+impl AppState {
+    /// Surface decode errors (first few) instead of failing silently — a black
+    /// window with no message is indistinguishable from "nothing works".
+    fn note_decode_error(&mut self, msg: &str) {
+        self.decode_errs += 1;
+        if self.decode_errs <= 5 {
+            log_err(&format!("decode error #{}: {}", self.decode_errs, msg));
+        }
+    }
 }
 
 impl AppState {
@@ -183,11 +204,11 @@ impl AppState {
         match ev {
             ServerEvent::Connected => window.set_title("spacedesk viewer - connected"),
             ServerEvent::Error(e) => {
-                eprintln!("error: {}", e);
+                log_err(&format!("error: {}", e));
                 window.set_title(&format!("spacedesk viewer - error: {}", e));
             }
             ServerEvent::Disconnected { reason } => {
-                eprintln!("disconnected: {}", reason);
+                log_err(&format!("disconnected: {}", reason));
                 window.set_title(&format!("spacedesk viewer - disconnected: {}", reason));
             }
             ServerEvent::Visibility(_) | ServerEvent::PowerSuspendHibernate(_) | ServerEvent::Rotation(_) => {}
@@ -211,14 +232,23 @@ impl AppState {
                     (None, _) => true,
                     (Some(ActiveDecoder::Raw(_)), None) => false,
                     (Some(ActiveDecoder::Raw(_)), Some(_)) => true,
+                    (Some(ActiveDecoder::Jpeg(_)), Some(spacedesk_core::ffmpeg::CodecKind::Mjpeg)) => false,
+                    (Some(ActiveDecoder::Jpeg(_)), _) => true,
                     (Some(ActiveDecoder::Ffmpeg(_)), None) => true,
                     (Some(ActiveDecoder::Ffmpeg(f)), Some(c)) => f.codec_kind() != c,
                 };
                 if need_new {
                     self.decoder = match want {
                         None => Some(ActiveDecoder::Raw(RawDecoder)),
+                        // JPEG tiles are decoded in-process (one complete JPEG
+                        // per packet); no ffmpeg pipe, no buffering latency.
+                        Some(spacedesk_core::ffmpeg::CodecKind::Mjpeg) => {
+                            Some(ActiveDecoder::Jpeg(spacedesk_core::jpeg::JpegDecoder))
+                        }
                         Some(codec) => {
-                            let (tw, th) = p.tile_dims();
+                            // H264 stream resolution = packet header (full screen
+                            // in native TCP mode).
+                            let (tw, th) = (p.width.max(1), p.height.max(1));
                             match FfmpegDecoder::new(
                                 codec,
                                 self.hwaccel.clone(),
@@ -228,7 +258,7 @@ impl AppState {
                             ) {
                                 Ok(d) => Some(ActiveDecoder::Ffmpeg(d)),
                                 Err(e) => {
-                                    eprintln!("decoder init failed: {}", e);
+                                    log_err(&format!("decoder init failed: {}", e));
                                     None
                                 }
                             }
@@ -236,8 +266,27 @@ impl AppState {
                     };
                 }
                 let frames = match &mut self.decoder {
-                    Some(ActiveDecoder::Raw(d)) => d.submit(&p).unwrap_or_default(),
-                    Some(ActiveDecoder::Ffmpeg(d)) => d.submit(&p).unwrap_or_default(),
+                    Some(ActiveDecoder::Raw(d)) => match d.submit(&p) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            self.note_decode_error(&e.to_string());
+                            Vec::new()
+                        }
+                    },
+                    Some(ActiveDecoder::Jpeg(d)) => match d.submit(&p) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            self.note_decode_error(&e.to_string());
+                            Vec::new()
+                        }
+                    },
+                    Some(ActiveDecoder::Ffmpeg(d)) => match d.submit(&p) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            self.note_decode_error(&e.to_string());
+                            Vec::new()
+                        }
+                    },
                     None => Vec::new(),
                 };
                 if !frames.is_empty() {
@@ -263,12 +312,12 @@ fn main() {
     let args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("error: {}", e);
+            log_err(&format!("error: {}", e));
             std::process::exit(2);
         }
     };
     if args.compression != Compression::Off as u32 && !ffmpeg_available() {
-        eprintln!("warning: ffmpeg not found; H264/JPEG decoding needs it (`sudo apt install ffmpeg`)");
+        log_err("warning: ffmpeg not found; H264/JPEG decoding needs it (`sudo apt install ffmpeg`)");
     }
 
     let mut cfg = ClientConfig::default();
@@ -367,6 +416,7 @@ fn main() {
         frame_rate: args.frame_rate,
         last_mouse: None,
         grabbed: args.kvm,
+        decode_errs: 0,
     };
 
     let result = event_loop.run(move |event, elwt| {
@@ -482,6 +532,6 @@ fn main() {
         }
     });
     if let Err(e) = result {
-        eprintln!("event loop error: {}", e);
+        log_err(&format!("event loop error: {}", e));
     }
 }

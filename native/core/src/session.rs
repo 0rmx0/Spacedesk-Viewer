@@ -117,7 +117,10 @@ fn send_event(events: &Sender<ServerEvent>, ev: ServerEvent) -> bool {
 
 fn vlog(cfg: &ClientConfig, msg: &str) {
     if cfg.verbose {
-        eprintln!("[session] {}", msg);
+        // never panic on a broken output pipe (e.g. `... -v 2>&1 | head`): a
+        // panicking session thread would silently freeze the whole viewer
+        use std::io::Write;
+        let _ = writeln!(std::io::stderr(), "[session] {}", msg);
     }
 }
 
@@ -306,11 +309,32 @@ fn connect_once(
                             if frag {
                                 frag_count += 1;
                             }
-                            if is_complete_jpeg(&p.payload) {
-                                if !send_event(events, ServerEvent::Frame(p)) {
-                                    outcome!("event receiver dropped");
+                            let is_jpeg = matches!(
+                                Compression::from_u32(p.compression),
+                                Some(Compression::Jpeg) | Some(Compression::MjpegD2)
+                            );
+                            if is_jpeg || is_complete_jpeg(&p.payload) {
+                                // JPEG tiles are complete images; fragments are
+                                // reassembled until the EOI marker shows up.
+                                if is_complete_jpeg(&p.payload) {
+                                    if !send_event(events, ServerEvent::Frame(p)) {
+                                        outcome!("event receiver dropped");
+                                    }
+                                } else {
+                                    pending.extend_from_slice(&p.payload);
+                                    if is_complete_jpeg(&pending) || !frag {
+                                        let payload = std::mem::take(&mut pending);
+                                        let mut p = p;
+                                        p.payload = payload;
+                                        if !send_event(events, ServerEvent::Frame(p)) {
+                                            outcome!("event receiver dropped");
+                                        }
+                                    }
                                 }
                             } else {
+                                // raw/H264 fragments: accumulate and emit when the
+                                // packet is unfragmented or every 4th fragment
+                                // (H264 is a byte stream, so batching is harmless).
                                 pending.extend_from_slice(&p.payload);
                                 if !frag || frag_count % 4 == 0 {
                                     let payload = std::mem::take(&mut pending);

@@ -11,6 +11,7 @@
 pub mod decoder;
 pub mod ffmpeg;
 pub mod frame;
+pub mod jpeg;
 pub mod protocol;
 pub mod session;
 pub mod transport;
