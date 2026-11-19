@@ -15,7 +15,8 @@ use crate::protocol::{
 use crate::transport::Conn;
 use crate::ws::{WsError, WsErrorKind};
 use std::net::ToSocketAddrs;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc::{Receiver, Sender}};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -31,6 +32,9 @@ pub struct ClientConfig {
     pub max_reconnects: u32,
     pub reconnect_delay: Duration,
     pub verbose: bool,
+    /// When set, the session loop stops instead of reconnecting (used by the
+    /// GUI to go back to its home menu).
+    pub stop: Option<Arc<AtomicBool>>,
 }
 
 impl Default for ClientConfig {
@@ -45,6 +49,7 @@ impl Default for ClientConfig {
             max_reconnects: 5,
             reconnect_delay: Duration::from_secs(2),
             verbose: false,
+            stop: None,
         }
     }
 }
@@ -144,6 +149,9 @@ pub fn run(
     let mut ladder_idx = 0usize;
     let mut attempts = 0u32;
     loop {
+        if cfg.stop.as_ref().map(|s| s.load(Ordering::SeqCst)).unwrap_or(false) {
+            return Ok(());
+        }
         let mut cfg_i = cfg.clone();
         cfg_i.identification = ladder[ladder_idx].clone();
         vlog(
@@ -161,6 +169,9 @@ pub fn run(
         );
         match connect_once(&cfg_i, &events, &cmds) {
             Ok(outcome) => {
+                if cfg.stop.as_ref().map(|s| s.load(Ordering::SeqCst)).unwrap_or(false) {
+                    return Ok(());
+                }
                 let more = ladder_idx + 1 < ladder.len();
                 let rejected = outcome.frames == 0 && outcome.elapsed < Duration::from_secs(3);
                 let reason = match &outcome.close {

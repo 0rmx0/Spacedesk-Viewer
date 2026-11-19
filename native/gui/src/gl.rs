@@ -45,6 +45,42 @@ void main() {
 }
 "#;
 
+/// UI vertex shader: attribute-less fullscreen-triangle-style quad driven by
+/// uniforms (works for rects and per-glyph text quads without a VBO).
+const UI_VS: &str = r#"#version 330 core
+uniform vec2 u_resolution;
+uniform vec2 u_offset;
+uniform vec2 u_size;
+uniform vec2 u_uv0;
+uniform vec2 u_uv1;
+out vec2 v_uv;
+void main() {
+    // two triangles (6 vertices) covering the unit quad
+    vec2 p;
+    if (gl_VertexID == 0) p = vec2(0.0, 0.0);
+    else if (gl_VertexID == 1) p = vec2(1.0, 0.0);
+    else if (gl_VertexID == 2) p = vec2(1.0, 1.0);
+    else if (gl_VertexID == 3) p = vec2(0.0, 0.0);
+    else if (gl_VertexID == 4) p = vec2(1.0, 1.0);
+    else p = vec2(0.0, 1.0);
+    vec2 pos = u_offset + p * u_size;
+    vec2 clip = vec2(pos.x / u_resolution.x * 2.0 - 1.0,
+                     1.0 - pos.y / u_resolution.y * 2.0);
+    v_uv = u_uv0 + p * (u_uv1 - u_uv0);
+    gl_Position = vec4(clip, 0.0, 1.0);
+}
+"#;
+
+const UI_FS: &str = r#"#version 330 core
+in vec2 v_uv;
+out vec4 frag;
+uniform sampler2D u_tex;
+uniform vec4 u_color;
+void main() {
+    frag = texture(u_tex, v_uv) * u_color;
+}
+"#;
+
 pub struct CursorImage {
     pub width: u32,
     pub height: u32,
@@ -57,6 +93,10 @@ pub struct Renderer {
     gl: glow::Context,
     present_prog: glow::Program,
     quad_prog: glow::Program,
+    ui_prog: glow::Program,
+    white_tex: glow::Texture,
+    font_tex: Option<glow::Texture>,
+    font: Option<crate::font::FontAtlas>,
     canvas_tex: glow::Texture,
     canvas_fbo: glow::Framebuffer,
     canvas_size: (u32, u32),
@@ -72,6 +112,23 @@ impl Renderer {
     pub unsafe fn new(gl: glow::Context) -> Renderer {
         let present_prog = link(&gl, PRESENT_VS, TEX_FS);
         let quad_prog = link(&gl, QUAD_VS, TEX_FS);
+        let ui_prog = link(&gl, UI_VS, UI_FS);
+
+        // 1x1 white texture for flat-color UI rects
+        let white_tex = {
+            let t = gl.create_texture().unwrap();
+            gl.bind_texture(glow::TEXTURE_2D, Some(t));
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+            gl.tex_image_2d(
+                glow::TEXTURE_2D, 0, glow::RGBA as i32, 1, 1, 0,
+                glow::RGBA, glow::UNSIGNED_BYTE, Some(&[255u8, 255, 255, 255]),
+            );
+            t
+        };
 
         let mk_tex = |gl: &glow::Context| {
             let t = gl.create_texture().unwrap();
@@ -115,6 +172,10 @@ impl Renderer {
             gl,
             present_prog,
             quad_prog,
+            ui_prog,
+            white_tex,
+            font_tex: None,
+            font: None,
             canvas_tex,
             canvas_fbo,
             canvas_size: (0, 0),
@@ -124,6 +185,106 @@ impl Renderer {
             cursor_size: (0, 0),
             quad_vao,
             _quad_vbo: quad_vbo,
+        }
+    }
+
+    /// Upload the font atlas as a texture.
+    pub unsafe fn set_font(&mut self, atlas: &crate::font::FontAtlas) {
+        let gl = &self.gl;
+        let t = gl.create_texture().unwrap();
+        gl.bind_texture(glow::TEXTURE_2D, Some(t));
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+        gl.tex_image_2d(
+            glow::TEXTURE_2D, 0, glow::RGBA as i32,
+            atlas.width as i32, atlas.height as i32, 0,
+            glow::RGBA, glow::UNSIGNED_BYTE, Some(&atlas.data),
+        );
+        self.font_tex = Some(t);
+        self.font = Some(atlas.clone());
+    }
+
+    /// Start a UI pass on the default framebuffer.
+    pub unsafe fn begin_ui(&self, viewport: (u32, u32)) {
+        let gl = &self.gl;
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        gl.viewport(0, 0, viewport.0 as i32, viewport.1 as i32);
+        gl.use_program(Some(self.ui_prog));
+        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_resolution").as_ref(), viewport.0 as f32, viewport.1 as f32);
+        gl.enable(glow::BLEND);
+        gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+        // a VAO must be bound for draw_arrays in a core profile
+        gl.bind_vertex_array(Some(self.quad_vao));
+        gl.active_texture(glow::TEXTURE0);
+        gl.uniform_1_i32(gl.get_uniform_location(self.ui_prog, "u_tex").as_ref(), 0);
+    }
+
+    pub unsafe fn end_ui(&self) {
+        let gl = &self.gl;
+        gl.disable(glow::BLEND);
+        gl.bind_vertex_array(None);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+    }
+
+    unsafe fn ui_quad(&self, x: f32, y: f32, w: f32, h: f32, uv: (f32, f32, f32, f32), tex: glow::Texture, color: [f32; 4]) {
+        let gl = &self.gl;
+        gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_offset").as_ref(), x, y);
+        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_size").as_ref(), w, h);
+        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_uv0").as_ref(), uv.0, uv.1);
+        gl.uniform_2_f32(gl.get_uniform_location(self.ui_prog, "u_uv1").as_ref(), uv.2, uv.3);
+        gl.uniform_4_f32(gl.get_uniform_location(self.ui_prog, "u_color").as_ref(), color[0], color[1], color[2], color[3]);
+        gl.draw_arrays(glow::TRIANGLES, 0, 6);
+    }
+
+    /// Filled rectangle (screen coords, y down from top).
+    pub unsafe fn draw_rect(&self, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
+        self.ui_quad(x, y, w, h, (0.0, 0.0, 1.0, 1.0), self.white_tex, color);
+    }
+
+    /// Text with pen at (x, baseline) — y is the baseline in screen coords.
+    pub unsafe fn draw_text(&self, x: f32, baseline: f32, scale: f32, text: &str, color: [f32; 4]) {
+        let (Some(font), Some(tex)) = (&self.font, self.font_tex) else { return };
+        let gl = &self.gl;
+        gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+        let mut pen_x = x;
+        for ch in text.chars() {
+            let cu = ch as u32;
+            if cu < crate::font::FIRST_CHAR || cu >= crate::font::FIRST_CHAR + crate::font::GLYPH_COUNT as u32 {
+                pen_x += font.ascent * 0.3 * scale;
+                continue;
+            }
+            let g = &font.glyphs[(cu - crate::font::FIRST_CHAR) as usize];
+            if g.w > 0.0 && g.h > 0.0 {
+                self.ui_quad(
+                    pen_x + g.xoff * scale,
+                    baseline - g.yoff * scale,
+                    g.w * scale,
+                    g.h * scale,
+                    (g.u0, g.v0, g.u1, g.v1),
+                    tex,
+                    color,
+                );
+            }
+            pen_x += g.advance * scale;
+        }
+    }
+
+    /// Width of a text in pixels at the given scale.
+    pub fn text_width(&self, scale: f32, text: &str) -> f32 {
+        match &self.font {
+            Some(font) => text.chars().map(|ch| {
+                let cu = ch as u32;
+                if cu < crate::font::FIRST_CHAR || cu >= crate::font::FIRST_CHAR + crate::font::GLYPH_COUNT as u32 {
+                    font.ascent * 0.3 * scale
+                } else {
+                    font.glyphs[(cu - crate::font::FIRST_CHAR) as usize].advance * scale
+                }
+            }).sum(),
+            None => text.len() as f32 * 8.0 * scale,
         }
     }
 
