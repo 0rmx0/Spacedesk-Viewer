@@ -11,8 +11,8 @@ use spacedesk_core::decoder::{Decoder, RawDecoder};
 use spacedesk_core::ffmpeg::codec_for_compression;
 use spacedesk_core::ffmpeg::{ffmpeg_available, FfmpegDecoder, HwAccel};
 use spacedesk_core::frame::{write_ppm, DecodedFrame};
-use spacedesk_core::protocol::{ClientType, Compression, Identification};
-use spacedesk_core::session::{run, ClientConfig, ServerEvent};
+use spacedesk_core::protocol::{ClientType, Compression};
+use spacedesk_core::session::{run, standard_ladder, ClientConfig, ServerEvent};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -32,6 +32,7 @@ struct Args {
     hwaccel: HwAccel,
     no_reconnect: bool,
     verbose: bool,
+    client_type: u32,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -49,6 +50,7 @@ fn parse_args() -> Result<Args, String> {
     let mut hwaccel = HwAccel::Auto;
     let mut no_reconnect = false;
     let mut verbose = false;
+    let mut client_type = ClientType::WindowsRemoteMonitor as u32;
 
     while let Some(a) = args.next() {
         let mut next = |name: &str| -> Result<String, String> {
@@ -104,6 +106,9 @@ fn parse_args() -> Result<Args, String> {
             }
             "--no-reconnect" => no_reconnect = true,
             "--verbose" | "-v" => verbose = true,
+            "--client-type" => {
+                client_type = next("--client-type")?.parse().map_err(|_| "bad --client-type")?
+            }
             "--help" | "-h" => {
                 println!("{}", help());
                 std::process::exit(0);
@@ -129,6 +134,7 @@ fn parse_args() -> Result<Args, String> {
         hwaccel,
         no_reconnect,
         verbose,
+        client_type,
     })
 }
 
@@ -171,20 +177,22 @@ fn main() {
     cfg.host = args.host.clone();
     cfg.port = args.port;
     cfg.reconnect = !args.no_reconnect;
-    cfg.identification = Identification {
-        client_type: ClientType::WindowsRemoteMonitor as u32,
-        compression: args.compression,
-        quality: args.quality,
-        subsampling: args.subsampling,
-        frame_rate: args.frame_rate,
-        resolution: args.client_res,
-        resolution_custom: args.custom_res,
-        client_name: format!("spacedesk-cli {} (Linux)", env!("CARGO_PKG_VERSION")),
-    };
+    cfg.verbose = args.verbose;
+    let ladder = standard_ladder(args.client_type, args.compression);
+    cfg.identification = ladder[0].clone();
+    cfg.identification.compression = args.compression;
+    cfg.identification.client_type = args.client_type;
+    cfg.identification.quality = args.quality;
+    cfg.identification.subsampling = args.subsampling;
+    cfg.identification.frame_rate = args.frame_rate;
+    cfg.identification.resolution = args.client_res;
+    cfg.identification.resolution_custom = args.custom_res;
+    cfg.identification.client_name = format!("spacedesk-cli {} (Linux)", env!("CARGO_PKG_VERSION"));
+    cfg.fallback_identifications = ladder[1..].to_vec();
 
     eprintln!(
-        "connecting to {}:{} compression={} quality={} subsampling={} fps_mode={} custom_res={:?}",
-        cfg.host, cfg.port, args.compression, args.quality, args.subsampling, args.frame_rate, args.custom_res
+        "connecting to {}:{} client_type={} compression={} quality={} fps_mode={} custom_res={:?}",
+        cfg.host, cfg.port, args.client_type, args.compression, args.quality, args.frame_rate, args.custom_res
     );
     if args.compression != Compression::Off as u32 && !ffmpeg_available() {
         eprintln!("warning: ffmpeg not found — install it (`sudo apt install ffmpeg`) for H264/JPEG decoding");

@@ -18,6 +18,7 @@ fn identification_packet_layout() {
         resolution: (2560, 1440),
         resolution_custom: Some((1920, 1080)),
         client_name: "Test Viewer".to_string(),
+        ..Default::default()
     };
     let pkt = identification_packet(&ident);
     assert_eq!(pkt.len(), PACKET_LEN);

@@ -88,6 +88,8 @@ pub struct WsClient {
     read_buf: Vec<u8>,
     read_pos: usize,
     closed: bool,
+    /// Close code + reason of the last close frame (1006 on abnormal EOF).
+    pub last_close: Option<(u16, String)>,
 }
 
 impl WsClient {
@@ -106,6 +108,7 @@ impl WsClient {
             read_buf: Vec::with_capacity(64 * 1024),
             read_pos: 0,
             closed: false,
+            last_close: None,
         };
         client.handshake(host_header)?;
         // after the handshake we want non-blocking-ish behaviour handled by the caller
@@ -120,7 +123,7 @@ impl WsClient {
     fn handshake(&mut self, host_header: &str) -> Result<(), WsError> {
         let key = b64_encode(&pseudo_random_bytes(16));
         let request = format!(
-            "GET / HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\n\r\n",
+            "GET / HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\n\r\n",
             host_header, key
         );
         self.stream.write_all(request.as_bytes())?;
@@ -170,9 +173,10 @@ impl WsClient {
             let mut tmp = [0u8; 16384];
             match self.stream.read(&mut tmp) {
                 Ok(0) => {
+                    self.last_close = Some((1006, "abnormal closure (EOF)".to_string()));
                     return Err(WsError {
                         kind: WsErrorKind::Closed,
-                        detail: "peer closed connection".to_string(),
+                        detail: "peer closed connection (EOF)".to_string(),
                     })
                 }
                 Ok(n) => self.read_buf.extend_from_slice(&tmp[..n]),
@@ -279,6 +283,13 @@ impl WsClient {
                 OP_PONG => {}
                 OP_CLOSE => {
                     self.closed = true;
+                    let code = if payload.len() >= 2 {
+                        u16::from_be_bytes([payload[0], payload[1]])
+                    } else {
+                        1005
+                    };
+                    let reason = String::from_utf8_lossy(&payload[2.min(payload.len())..]).to_string();
+                    self.last_close = Some((code, reason));
                     let _ = self.send_frame(OP_CLOSE, &payload);
                     return Ok(None);
                 }

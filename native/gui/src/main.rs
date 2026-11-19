@@ -19,8 +19,8 @@ use raw_window_handle::HasRawWindowHandle;
 use spacedesk_core::decoder::{Decoder, RawDecoder};
 use spacedesk_core::ffmpeg::{codec_for_compression, ffmpeg_available, FfmpegDecoder, HwAccel};
 use spacedesk_core::frame::DecodedFrame;
-use spacedesk_core::protocol::{ClientType, Compression, CursorBitmapPacket, Identification, MouseButton};
-use spacedesk_core::session::{run, ClientCommand, ClientConfig, ServerEvent};
+use spacedesk_core::protocol::{ClientType, Compression, CursorBitmapPacket, MouseButton};
+use spacedesk_core::session::{run, standard_ladder, ClientCommand, ClientConfig, ServerEvent};
 use std::num::NonZeroU32;
 use std::sync::mpsc::{self, Receiver};
 use winit::event::{ElementState, Event, KeyEvent, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent};
@@ -41,6 +41,8 @@ struct Args {
     kvm: bool,
     hwaccel: HwAccel,
     no_reconnect: bool,
+    verbose: bool,
+    client_type: u32,
 }
 
 fn help() -> &'static str {
@@ -73,6 +75,8 @@ fn parse_args() -> Result<Args, String> {
     let mut kvm = true;
     let mut hwaccel = HwAccel::Auto;
     let mut no_reconnect = false;
+    let mut verbose = false;
+    let mut client_type = ClientType::WindowsRemoteMonitor as u32;
     while let Some(a) = args.next() {
         let mut next = |name: &str| args.next().ok_or_else(|| format!("missing value for {}", name));
         match a.as_str() {
@@ -124,6 +128,10 @@ fn parse_args() -> Result<Args, String> {
                 }
             }
             "--no-reconnect" => no_reconnect = true,
+            "--verbose" | "-v" => verbose = true,
+            "--client-type" => {
+                client_type = next("--client-type")?.parse().map_err(|_| "bad --client-type")?
+            }
             "--help" | "-h" => {
                 println!("{}", help());
                 std::process::exit(0);
@@ -136,7 +144,7 @@ fn parse_args() -> Result<Args, String> {
         .ok_or_else(|| format!("missing server host\n\n{}", help()))?;
     Ok(Args {
         host, port, compression, quality, subsampling, frame_rate, custom_res,
-        win_size, fullscreen, kvm, hwaccel, no_reconnect,
+        win_size, fullscreen, kvm, hwaccel, no_reconnect, verbose, client_type,
     })
 }
 
@@ -249,16 +257,18 @@ fn main() {
     cfg.host = args.host.clone();
     cfg.port = args.port;
     cfg.reconnect = !args.no_reconnect;
-    cfg.identification = Identification {
-        client_type: ClientType::WindowsRemoteMonitor as u32,
-        compression: args.compression,
-        quality: args.quality,
-        subsampling: args.subsampling,
-        frame_rate: args.frame_rate,
-        resolution: args.win_size,
-        resolution_custom: args.custom_res,
-        client_name: format!("spacedesk-viewer {} (Linux)", env!("CARGO_PKG_VERSION")),
-    };
+    cfg.verbose = args.verbose;
+    let ladder = standard_ladder(args.client_type, args.compression);
+    cfg.identification = ladder[0].clone();
+    cfg.identification.compression = args.compression;
+    cfg.identification.client_type = args.client_type;
+    cfg.identification.quality = args.quality;
+    cfg.identification.subsampling = args.subsampling;
+    cfg.identification.frame_rate = args.frame_rate;
+    cfg.identification.resolution = args.win_size;
+    cfg.identification.resolution_custom = args.custom_res;
+    cfg.identification.client_name = format!("spacedesk-viewer {} (Linux)", env!("CARGO_PKG_VERSION"));
+    cfg.fallback_identifications = ladder[1..].to_vec();
 
     let (ev_tx, ev_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel::<ClientCommand>();

@@ -289,6 +289,8 @@ pub struct Identification {
     pub quality: u32,
     pub subsampling: u32,
     pub frame_rate: u16,
+    pub version_major: u32,
+    pub version_minor: u32,
     /// Resolution advertised at header offsets 52/88 (usually the local screen).
     pub resolution: (u32, u32),
     /// Optional custom resolution (header offsets 56/92, mode 2).
@@ -302,8 +304,10 @@ impl Default for Identification {
             client_type: ClientType::WindowsRemoteMonitor as u32,
             compression: Compression::H264 as u32,
             quality: 70,
-            subsampling: 2, // YUV 4:2:0
+            subsampling: 0, // the HTML5 viewer leaves header offset 20 at 0
             frame_rate: 0,  // 0 = 30 fps, 1 = 60 fps (as in the HTML5 viewer)
+            version_major: VERSION_MAJOR,
+            version_minor: VERSION_MINOR,
             resolution: (1920, 1080),
             resolution_custom: None,
             client_name: "spacedesk native viewer (Linux)".to_string(),
@@ -316,8 +320,8 @@ pub fn identification_packet(ident: &Identification) -> Vec<u8> {
     let mut header = vec![0u8; HEADER_LEN];
     put_u32(&mut header, 0, HeaderType::Identification as u32);
     put_u32(&mut header, 4, PAYLOAD_LEN as u32);
-    put_u32(&mut header, 8, VERSION_MAJOR);
-    put_u32(&mut header, 12, VERSION_MINOR);
+    put_u32(&mut header, 8, ident.version_major);
+    put_u32(&mut header, 12, ident.version_minor);
     put_u32(&mut header, 16, ident.client_type);
     put_u32(&mut header, 20, ident.subsampling);
     put_u32(&mut header, 24, ident.compression);

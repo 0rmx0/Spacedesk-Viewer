@@ -55,8 +55,9 @@ cd native/gui && cargo build --release       # binaire GUI    : spacedesk-viewer
 ```
 
 > `core` et `cli` n'ont **aucune dépendance externe** (std uniquement) et se
-> compilent/testent même sans accès réseau. `gui` a besoin de crates.io
-> (`winit`, `glutin`, `glow`) pour se compiler.
+> compilent/testent même sans accès réseau. `gui` utilise `winit 0.29` +
+> `glutin 0.31`/`glutin-winit 0.4` + `glow 0.14` (via crates.io) et a été
+> compilé avec succès en release sur Ubuntu 24.04.
 
 ## Utilisation
 
