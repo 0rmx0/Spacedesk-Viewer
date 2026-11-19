@@ -89,6 +89,25 @@ typings/
 # Electron-Forge
 out/
 
-# Rust native client
+# Rust native client (workspace at native/)
 native/**/target/
-native/**/*.rs.bk
+*.rs.bk
+# .deb build artifacts + staging dirs from native/packaging/build-deb.sh
+native/packaging/*.deb
+native/packaging/spacedesk-viewer_*_amd64/
+
+# electron-builder output (npm run dist/build)
+dist/
+
+# Python (native/examples/mock_server.py)
+__pycache__/
+*.py[cod]
+
+# IDEs / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
